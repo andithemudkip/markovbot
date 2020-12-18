@@ -1,0 +1,17 @@
+{
+  "name": "markovbot-js",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@alpha-manager/core": "^1.0.6",
+    "discord.js": "^12.5.1"
+  }
+}
