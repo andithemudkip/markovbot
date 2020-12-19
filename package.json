@@ -5,13 +5,15 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index"
+    "start": "node launcher.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@alpha-manager/core": "^1.0.6",
-    "discord.js": "^12.5.1"
+    "discord.js": "^12.5.1",
+    "download": "^8.0.0",
+    "extract-zip": "^2.0.1"
   }
 }

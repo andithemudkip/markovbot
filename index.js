@@ -1,6 +1,7 @@
 const Discord = require ('discord.js');
 const client = new Discord.Client ();
 const fs = require ('fs');
+const extract = require ('extract-zip');
 
 const { Task } = require ('@alpha-manager/core');
 
@@ -91,6 +92,8 @@ const updateServerFiles = () => {
     console.timeEnd ('update server files');
 }
 
+
+
 const onNewMessage = msg => {
     if (msg.guild) {
         let filename = `${msg.guild.id}.txt`;
@@ -104,7 +107,11 @@ const onNewMessage = msg => {
             chains [filename].update (msg.toString ());
         }
     } else {
-        msg.reply (`don't dm me`);
+        if (msg.toString ().startsWith ('mk-update')) {
+            process.send ({ messageType: 'UPDATE' , ...msg });
+        } else {
+            msg.reply (`don't dm me`);
+        }
     }
 }
 
@@ -126,7 +133,7 @@ const replyToMessage = msg => {
 const basicEmbed = () => new Discord.MessageEmbed ()
                             .setColor ("#ff00ff")
                             .setThumbnail ('https://cdn.discordapp.com/avatars/787354572452266024/8fa42be5ca295af674cdcb0c461bb803.png?size=64')
-                            .setFooter ("MarkovBot v2 by andithemudkip. Original bot by Dazzi.\nSponsored by Hiitchy.");
+                            .setFooter ("MarkovBot v2.1 by andithemudkip. Original bot by Dazzi.\nSponsored by Hiitchy.");
 
 const processCommand = msg => {
     let command = msg.toString ().substring (3);
@@ -135,7 +142,7 @@ const processCommand = msg => {
         case 'help':
         msg.channel.send (
             basicEmbed ()
-                .setTitle ("MarkovBot v2 Help")
+                .setTitle ("MarkovBot v2.1 Help")
                 .setDescription ("MarkovBot is a discord bot that uses Markov chains to generate responses to your messages.\nIt learns from the messages sent in the current server (in the channels it has permissions to see), and replies to your messages in the `markovbot` channel;\n Expect it be pretty quiet for a little while after you add it to a server until it learns more words.")
                 .addFields ({
                     name: "Commands",
@@ -205,9 +212,24 @@ for (let i = 0; i < servers.length; i++) {
 
 console.timeEnd ('initial init');
 
+
+process.on ('message', msg => {
+    switch (msg.messageType) {
+        case 'MESSAGE-ADMINS':
+        for (let id of config.admins) {
+            if (client.users.cache.get (id)) {
+                client.users.cache.get (id).send (msg.message);
+            }
+        }
+        break;
+    }
+});
+
+
 client.on ('ready', () => {
     consoleLog (`Logged in as ${client.user.tag}!`);
-    client.user.setActivity ("you type | mk-help", { type: "WATCHING" })
+    client.user.setActivity ("you type | mk-help", { type: "WATCHING" });
+    process.send ({ messageType: 'READY' });
 });
 
 client.on ('message', msg => {
