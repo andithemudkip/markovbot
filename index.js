@@ -1,7 +1,6 @@
 const Discord = require ('discord.js');
 const client = new Discord.Client ();
 const fs = require ('fs');
-const extract = require ('extract-zip');
 
 const { Task } = require ('@alpha-manager/core');
 
