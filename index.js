@@ -107,7 +107,7 @@ const onNewMessage = msg => {
             chains [filename].update (msg.toString ());
         }
     } else {
-        if (msg.toString ().startsWith ('mk-update')) {
+        if (msg.toString ().startsWith ('mk-update') && config.admins.includes (msg.author.id)) {
             process.send ({ messageType: 'UPDATE' , ...msg });
         } else {
             msg.reply (`don't dm me`);
@@ -130,6 +130,10 @@ const replyToMessage = msg => {
     }
 }
 
+const pinMessage = msg => {
+
+}
+
 const basicEmbed = () => new Discord.MessageEmbed ()
                             .setColor ("#ff00ff")
                             .setThumbnail ('https://cdn.discordapp.com/avatars/787354572452266024/8fa42be5ca295af674cdcb0c461bb803.png?size=64')
@@ -146,7 +150,7 @@ const processCommand = msg => {
                 .setDescription ("MarkovBot is a discord bot that uses Markov chains to generate responses to your messages.\nIt learns from the messages sent in the current server (in the channels it has permissions to see), and replies to your messages in the `markovbot` channel;\n Expect it be pretty quiet for a little while after you add it to a server until it learns more words.")
                 .addFields ({
                     name: "Commands",
-                    value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string"
+                    value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string\n`mk-pin` - replying to a message sent by Markov with `mk-pin` will pin the message in the server's `markovbot-pins` channel (if it exists); alternatively, you can do `mk-pin <message_id>`"
                 })
         );
         break;
@@ -190,6 +194,38 @@ const processCommand = msg => {
         case 'chain':
         let reply = chains [`${msg.guild.id}.txt`].generate ({ grams: 10 });
         msg.channel.send (reply);
+        break;
+
+        case 'pin':
+        if (msg.member.hasPermission ('MANAGE_MESSAGES')) {
+            let id;
+            if (msg.reference) id = msg.reference.messageID;
+            else if (commParts.length == 2) id = commParts [1];
+            if (id) {
+                msg.channel.messages.fetch (id).then (messageToPin => {
+                    if (messageToPin.author.id === client.user.id) {
+                        let pinChannel = msg.guild.channels.cache.find (ch => ch.name === 'markovbot-pins');
+                        if (pinChannel) {
+                            let originalText = messageToPin.toString ();
+                            let linkToMessage = `https://discordapp.com/channels/${messageToPin.guild.id}/${messageToPin.channel.id}/${id}`;
+                            let authorAvatar = `https://cdn.discordapp.com/avatars/${messageToPin.author.id}/${client.user.avatar}.png`;
+                            pinChannel.send (
+                                basicEmbed ()
+                                    .setAuthor (messageToPin.author.username, authorAvatar, linkToMessage)
+                                    .setDescription (`${originalText}\n\n[Go to original](${linkToMessage})`)
+                                    .setFooter (`Pinned by ${msg.author.username}#${msg.author.discriminator} | #${messageToPin.channel.name} | ${messageToPin.guild.name}`)
+                                    .setThumbnail (null)
+                            );
+                            msg.react ("👌");
+                        } else {
+                            msg.reply ('there is no `markovbot-pins` channel on this server.');
+                        }
+                    } else msg.react ('🚫');
+                }).catch (err => {
+                    msg.react ('🚫');
+                });
+            } else msg.react ('🚫');
+        } else msg.react ('🚫');
         break;
     }
 }

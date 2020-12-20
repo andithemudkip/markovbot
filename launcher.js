@@ -9,6 +9,8 @@ let justUpdated = false;
 
 let markov;
 
+let consoleLog = (...arg) => console.log (`[${new Date ().toISOString ()}] `, ...arg);
+
 const messageAdmins = (message, markov) => {
     markov.send ({ messageType: "MESSAGE-ADMINS", message });
 }
@@ -19,7 +21,7 @@ const handleUpdate = (msg, markov) => {
         if (attachments.length) {
             if (!fs.existsSync ('./update-temp/')) fs.mkdirSync ('./update-temp/');
             justUpdated = true;
-            console.log ('updating...');
+            consoleLog ('updating...');
             messageAdmins ('updating...', markov);
             
             if (attachments.length === 1 && attachments [0].url.endsWith ('.zip')) {
@@ -27,27 +29,27 @@ const handleUpdate = (msg, markov) => {
                     for (let file of res) {
                         let fpath = path.join (__dirname, 'update-temp', file.path);
                         let dpath = path.join (__dirname, file.path)
-                        console.log (`copy ${fpath} to ${dpath}`);
+                        consoleLog (`copy ${fpath} to ${dpath}`);
                         try {
                             fs.copyFileSync (fpath, dpath);
                         } catch (error) {
-                            console.error (err);
+                            consoleLog (err);
                         }
                     }
-                    console.log ('update finished. checking npm packages. this may take a while.');
+                    consoleLog ('update finished. checking npm packages. this may take a while.');
 
                     fs.rmSync ('./update-temp/', { recursive: true });
 
                     exec (`npm install`, (err, stdout, stderr) => {
                         if (err) {
-                            console.error (`exec error ${err}`);
+                            consoleLog (`exec error ${err}`);
                             return;
                         }
 
-                        console.log (`output:\n${stdout}`);
-                        console.error (`stderr: ${stderr}`);
+                        consoleLog (`output:\n${stdout}`);
+                        consoleLog (`stderr: ${stderr}`);
 
-                        console.log (`restarting markov.`);
+                        consoleLog (`restarting markov.`);
 
                         restartMarkov ();
                     });
@@ -56,7 +58,7 @@ const handleUpdate = (msg, markov) => {
                 // might add this in the future; for now only zip files are supported
             }
         } else {
-            console.log ('no files provided');
+            consoleLog ('no files provided');
             messageAdmins ('Received update command; no files provided.', markov);
         }
     }
@@ -75,7 +77,7 @@ let restartMarkov = () => {
     
             case 'READY':
             if (justUpdated) {
-                console.log ('\nMARKOV HAS BEEN UPDATED\n');
+                consoleLog ('\nMARKOV HAS BEEN UPDATED\n');
                 justUpdated = false;
             }
             break;
