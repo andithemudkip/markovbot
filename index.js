@@ -130,10 +130,6 @@ const replyToMessage = msg => {
     }
 }
 
-const pinMessage = msg => {
-
-}
-
 const basicEmbed = () => new Discord.MessageEmbed ()
                             .setColor ("#ff00ff")
                             .setThumbnail ('https://cdn.discordapp.com/avatars/787354572452266024/8fa42be5ca295af674cdcb0c461bb803.png?size=64')
@@ -234,8 +230,6 @@ new Task ()
     .do (updateServerFiles)
     .every (config.updateServerFilesInterval).second ()
     .start ();
-
-
 
 if (!fs.existsSync ('./servers/')) fs.mkdirSync ('./servers/');
 if (!fs.existsSync ('./chains/')) fs.mkdirSync ('./chains/');
