@@ -6,14 +6,19 @@ const { Task } = require ('@alpha-manager/core');
 
 const MarkovChain = require ('./markov-util.js');
 
+const owoify = require ('owoify-js').default;
+
 const chains = {};
 const buffers = {};
-const currentStates = {};
+// const currentStates = {};
+const serverSettings = {};
 
 const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM"];
 
 const config = require ('./config.json');
 const { stdout } = require ('process');
+
+let uwu = t => t.replace (/l|r/gi, 'w');
 
 // <utility overrides>
 let tmpTimeEnd = console.timeEnd;
@@ -31,7 +36,12 @@ consoleLog ('servers: ', `${servers.join (', ')}`);
 const initChain = ch => {
     console.time (`initialize chain for server ${ch}`);
     buffers [ch] = [];
-    currentStates [ch] = states [0];
+    // currentStates [ch] = states [0];
+    
+    serverSettings [ch] = {
+        currentState: states [0],
+        owo: 0
+    }
     if (!fs.existsSync (`./chains/${ch}`)) {
         consoleLog ('from msg file');
         chains [ch] = new MarkovChain ();
@@ -116,10 +126,27 @@ const onNewMessage = msg => {
 
 const replyToMessage = msg => {
     if (chains [`${msg.guild.id}.txt`]) {
-        let msgText = textBasedOnState (msg.toString (), currentStates [`${msg.guild.id}.txt`]);
+        let msgText = textBasedOnState (msg.toString (), serverSettings [`${msg.guild.id}.txt`].currentState);
         let reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText, grams: 3 });
         if (reply [0] === ' ') reply = reply.substring (1);
         if (reply && reply != msg.toString ()) {
+            switch (serverSettings [`${msg.guild.id}.txt`].owo) {
+                case 1:
+                reply = uwu (reply);
+                break;
+
+                case 2:
+                reply = owoify (reply, 'owo');
+                break;
+
+                case 3:
+                reply = owoify (reply, 'uwu');
+                break;
+
+                case 4:
+                reply = owoify (reply, 'uvu');
+                break;
+            }
             msg.channel.send (reply);
         } else {
             msg.react ("markov_what:620612190902157343").catch (err => {
@@ -145,7 +172,7 @@ const processCommand = msg => {
                 .setDescription ("MarkovBot is a discord bot that uses Markov chains to generate responses to your messages.\nIt learns from the messages sent in the current server (in the channels it has permissions to see), and replies to your messages in the `markovbot` channel;\n Expect it be pretty quiet for a little while after you add it to a server until it learns more words.")
                 .addFields ({
                     name: "Commands",
-                    value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string\n`mk-pin` - replying to a message sent by Markov with `mk-pin` will pin the message in the server's `markovbot-pins` channel (if it exists); alternatively, you can do `mk-pin <message_id>`"
+                    value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string\n`mk-pin` - replying to a message sent by Markov with `mk-pin` will pin the message in the server's `markovbot-pins` channel (if it exists); alternatively, you can do `mk-pin <message_id>`\n`mk-uwu [<level>]` - if no level is provided it shows the current level and all possible settings; if one is provided it sets the bot's uwu level to the one specified"
                 })
         );
         break;
@@ -158,7 +185,7 @@ const processCommand = msg => {
                     .setDescription ("This setting tells the bot which words of your message it should use to form a sentence.")
                     .addFields ({
                         name: "Current State",
-                        value: currentStates [`${msg.guild.id}.txt`]
+                        value: serverSettings [`${msg.guild.id}.txt`].currentState
                     }, {
                         name: "States",
                         value: "0 - FIRST_OR_LAST\n1 - FIRST_WORD/S_ONLY\n2 - FIRST_ONLY\n3 - LAST_ONLY\n4 - RANDOM"
@@ -168,12 +195,18 @@ const processCommand = msg => {
                     })
             )
         } else {
-            currentStates [`${msg.guild.id}.txt`] = states [Number (commParts [1])];
-            msg.channel.send (
-                basicEmbed ()
-                    .setTitle ("State set to `" + currentStates [`${msg.guild.id}.txt`] + "`")
-                    .setThumbnail (null)
-            )
+            let s = Number (commParts [1]);
+            if (s >= 0 && s <= 4) {
+                serverSettings [`${msg.guild.id}.txt`].currentState = states [s];
+                msg.channel.send (
+                    basicEmbed ()
+                        .setTitle ("State set to `" + serverSettings [`${msg.guild.id}.txt`].currentState + "`")
+                        .setThumbnail (null)
+                )
+            } else {
+                msg.react ('🚫');
+            }
+            
         }
         break;
 
@@ -221,6 +254,36 @@ const processCommand = msg => {
                 });
             } else msg.react ('🚫');
         } else msg.react ('🚫');
+        break;
+
+        case 'uwu':
+        if (commParts.length == 1) {
+            msg.channel.send (
+                basicEmbed ()
+                    .setTitle ("uwu")
+                    .setDescription ("How uwuified should the bot's messages be?")
+                    .addFields ({
+                        name: "Current uwu level",
+                        value: serverSettings [`${msg.guild.id}.txt`].owo
+                    }, {
+                        name: "Levels",
+                        value: "0 - OFF\n1 - LIGHT\n2 - MEDIUM\n3 - HARD\n4 - UVU"
+                    }, {
+                        name: "Changing the state",
+                        value: "Type `mk-uwu <number>` to change the uwu level"
+                    })
+            )
+        } else {
+            let s = Number (commParts [1]);
+            if (s >= 0 && s <= 4) {
+                serverSettings [`${msg.guild.id}.txt`].owo = Number (commParts [1]);
+                msg.channel.send (
+                    basicEmbed ()
+                        .setTitle (`uwu set to ${serverSettings [`${msg.guild.id}.txt`].owo}`)
+                        .setThumbnail (null)
+                )
+            } else msg.react ('🚫');
+        }
         break;
     }
 }
