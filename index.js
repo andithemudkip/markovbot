@@ -40,7 +40,7 @@ const initChain = ch => {
     
     serverSettings [ch] = {
         currentState: states [0],
-        owo: 0
+        owo: 1
     }
     if (!fs.existsSync (`./chains/${ch}`)) {
         consoleLog ('from msg file');
@@ -129,21 +129,26 @@ const replyToMessage = msg => {
         let msgText = textBasedOnState (msg.toString (), serverSettings [`${msg.guild.id}.txt`].currentState);
         let reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText, grams: 3 });
         if (reply [0] === ' ') reply = reply.substring (1);
+
+        if (!reply || reply == msg.toString ()) {
+            reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText.toLowerCase (), grams: 3 });
+        }
+
         if (reply && reply != msg.toString ()) {
             switch (serverSettings [`${msg.guild.id}.txt`].owo) {
-                case 1:
+                case 2:
                 reply = uwu (reply);
                 break;
 
-                case 2:
+                case 3:
                 reply = owoify (reply, 'owo');
                 break;
 
-                case 3:
+                case 4:
                 reply = owoify (reply, 'uwu');
                 break;
 
-                case 4:
+                case 5:
                 reply = owoify (reply, 'uvu');
                 break;
             }
@@ -156,25 +161,34 @@ const replyToMessage = msg => {
     }
 }
 
+let createAPIMessage = async (interaction, content) => {
+    const apiMessage = await Discord.APIMessage.create (client.channels.resolve (interaction.channel_id), content)
+        .resolveData ()
+        .resolveFiles ()
+
+    return { ...apiMessage.data, files: apiMessage.files };
+}
+
 const basicEmbed = () => new Discord.MessageEmbed ()
                             .setColor ("#ff00ff")
                             .setThumbnail ('https://cdn.discordapp.com/avatars/787354572452266024/8fa42be5ca295af674cdcb0c461bb803.png?size=64')
                             .setFooter ("MarkovBot v2.1 by andithemudkip. Original bot by Dazzi.\nSponsored by Hiitchy.");
+
+
+const helpEmbed = basicEmbed ()
+                .setTitle ("MarkovBot v2.1 Help")
+                .setDescription ("MarkovBot is a discord bot that uses Markov chains to generate responses to your messages.\nIt learns from the messages sent in the current server (in the channels it has permissions to see), and replies to your messages in the `markovbot` channel;\n Expect it be pretty quiet for a little while after you add it to a server until it learns more words.")
+                .addFields ({
+                    name: "Commands",
+                    value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string\n`mk-pin` - replying to a message sent by Markov with `mk-pin` will pin the message in the server's `markovbot-pins` channel (if it exists); alternatively, you can do `mk-pin <message_id>`\n`mk-uwu [<level>]` - if no level is provided it shows the current level and all possible settings; if one is provided it sets the bot's uwu level to the one specified"
+                });
 
 const processCommand = msg => {
     let command = msg.toString ().substring (3);
     let commParts = command.split (' ');
     switch (commParts [0]) {
         case 'help':
-        msg.channel.send (
-            basicEmbed ()
-                .setTitle ("MarkovBot v2.1 Help")
-                .setDescription ("MarkovBot is a discord bot that uses Markov chains to generate responses to your messages.\nIt learns from the messages sent in the current server (in the channels it has permissions to see), and replies to your messages in the `markovbot` channel;\n Expect it be pretty quiet for a little while after you add it to a server until it learns more words.")
-                .addFields ({
-                    name: "Commands",
-                    value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string\n`mk-pin` - replying to a message sent by Markov with `mk-pin` will pin the message in the server's `markovbot-pins` channel (if it exists); alternatively, you can do `mk-pin <message_id>`\n`mk-uwu [<level>]` - if no level is provided it shows the current level and all possible settings; if one is provided it sets the bot's uwu level to the one specified"
-                })
-        );
+        msg.channel.send (helpEmbed);
         break;
 
         case 'state':
@@ -188,7 +202,7 @@ const processCommand = msg => {
                         value: serverSettings [`${msg.guild.id}.txt`].currentState
                     }, {
                         name: "States",
-                        value: "0 - FIRST_OR_LAST\n1 - FIRST_WORD/S_ONLY\n2 - FIRST_ONLY\n3 - LAST_ONLY\n4 - RANDOM"
+                        value: "1 - FIRST_OR_LAST\n2 - FIRST_WORD/S_ONLY\n3 - FIRST_ONLY\n4 - LAST_ONLY\n5 - RANDOM"
                     }, {
                         name: "Changing the state",
                         value: "Type `mk-state <number>` to change the state"
@@ -196,8 +210,8 @@ const processCommand = msg => {
             )
         } else {
             let s = Number (commParts [1]);
-            if (s >= 0 && s <= 4) {
-                serverSettings [`${msg.guild.id}.txt`].currentState = states [s];
+            if (s >= 1 && s <= 5) {
+                serverSettings [`${msg.guild.id}.txt`].currentState = states [s - 1];
                 msg.channel.send (
                     basicEmbed ()
                         .setTitle ("State set to `" + serverSettings [`${msg.guild.id}.txt`].currentState + "`")
@@ -267,15 +281,15 @@ const processCommand = msg => {
                         value: serverSettings [`${msg.guild.id}.txt`].owo
                     }, {
                         name: "Levels",
-                        value: "0 - OFF\n1 - LIGHT\n2 - MEDIUM\n3 - HARD\n4 - UVU"
+                        value: "1 - OFF\n2 - LIGHT\n3 - MEDIUM\n4 - HARD\n5 - UVU"
                     }, {
-                        name: "Changing the state",
+                        name: "Changing the uwu level",
                         value: "Type `mk-uwu <number>` to change the uwu level"
                     })
             )
         } else {
             let s = Number (commParts [1]);
-            if (s >= 0 && s <= 4) {
+            if (s >= 1 && s <= 5) {
                 serverSettings [`${msg.guild.id}.txt`].owo = Number (commParts [1]);
                 msg.channel.send (
                     basicEmbed ()
@@ -322,11 +336,182 @@ client.on ('ready', () => {
     consoleLog (`Logged in as ${client.user.tag}!`);
     client.user.setActivity ("you type | mk-help", { type: "WATCHING" });
     process.send ({ messageType: 'READY' });
+
+
+    // <slash commands>
+    client.api.applications (client.user.id).commands.post ({
+        data: {
+            name: "help",
+            description: "Displays the help message for Markovbot"
+        }
+    }).then (() => consoleLog ('created /help command')).catch (error => consoleLog ('err creating /help command', error));
+
+    client.api.applications (client.user.id).commands.post ({
+        data: {
+            name: "lines",
+            description: "Displays the number of lines in the server's text file"
+        }
+    }).then (() => consoleLog ('created /lines command')).catch (error => consoleLog ('err creating /lines command', error));
+
+
+    client.api.applications (client.user.id).commands.post ({
+        data: {
+            name: "state",
+            description: "The MarkovBot chaining state for this server",
+            options: [{
+                type: 4,
+                required: false,
+                name: 'state',
+                description: 'Set the state to set for this server',
+                choices: [
+                    { value: 1, name: 'FIRST OR LAST' },
+                    { value: 2, name: 'FIRST WORD/S ONLY' },
+                    { value: 3, name: 'FIRST ONLY' },
+                    { value: 4, name: 'LAST ONLY' },
+                    { value: 5, name: 'RANDOM' }
+                ]
+            }]
+        }
+    }).then (() => consoleLog ('created /state command')).catch (error => consoleLog ('err creating /state command', error));
+
+    client.api.applications (client.user.id).commands.post ({
+        data: {
+            name: "uwu",
+            description: "The uwu level for MarkovBot's messages in this server",
+            options: [{
+                type: 4,
+                required: false,
+                name: 'level',
+                description: 'The uwu level',
+                choices: [
+                    { value: 1, name: 'OFF' },
+                    { value: 2, name: 'LIGHT' },
+                    { value: 3, name: 'MEDIUM' },
+                    { value: 4, name: 'HARD' },
+                    { value: 5, name: 'UVU' }
+                ]
+            }]
+        }
+    }).then (() => consoleLog ('created /uwu command')).catch (error => consoleLog ('err creating /uwu command', error));
+
+    client.api.applications (client.user.id).commands.post ({
+        data: {
+            name: "chain",
+            description: "Generates a random sentence without a prompt"
+        }
+    }).then (() => consoleLog ('created /chain command')).catch (error => consoleLog ('err creating /chain command', error));
+
+
+    // delete command
+    // let toDelete = ['790934440846557184', '790937004627066892']
+    // client.api.applications (client.user.id).guilds ('205978604826394624').commands ('790932675413671956').delete ().then (console.log).catch (console.error);
+    // list commands
+    // client.api.applications (client.user.id).commands.get ().then (res => {
+    //     // console.log (res);
+    //     for (let command of res) {
+    //         client.api.applications (client.user.id).commands (command.id).delete ().then (console.log).catch (console.error);
+    //     }
+    // }).catch (console.error);
+
+
+    client.ws.on ('INTERACTION_CREATE', async interaction => {
+        const command = interaction.data.name.toLowerCase ();
+        const args = interaction.data.options;
+
+        let channel = client.channels.cache.find (ch => ch.id === interaction.channel_id);
+        if (channel.name === 'markovbot') {
+            switch (command) {
+                case 'help':
+                client.api.interactions (interaction.id, interaction.token).callback.post ({
+                    data: {
+                        type: 4,
+                        data: await createAPIMessage (interaction, helpEmbed)
+                    }
+                });
+                break;
+    
+                case 'lines':
+                let l = fs.readFileSync (`./servers/${interaction.guild_id}.txt`, 'utf8').split ('\n');
+                let linesEmbed = basicEmbed ()
+                        .setThumbnail (null)
+                        .setTitle (`\`${l.length}\` lines found in text file.`);
+                client.api.interactions (interaction.id, interaction.token).callback.post ({
+                    data: {
+                        type: 4,
+                        data: await createAPIMessage (interaction, linesEmbed)
+                    }
+                });
+                break;
+    
+                case 'state':
+                let stateResponseEmbed;
+                if (args && args.length) {
+                    let stateToSet = args.find (arg => arg.name === 'state').value;
+                    serverSettings [`${interaction.guild_id}.txt`].currentState = states [stateToSet - 1];
+                    stateResponseEmbed = basicEmbed ()
+                            .setTitle ("State set to `" + serverSettings [`${interaction.guild_id}.txt`].currentState + "`")
+                            .setThumbnail (null);
+                } else {
+                    stateResponseEmbed = basicEmbed ()
+                        .setTitle (`The current state is \`${ serverSettings [`${interaction.guild_id}.txt`].currentState }\``)
+                        .setThumbnail (null);
+                }
+                
+                client.api.interactions (interaction.id, interaction.token).callback.post ({
+                    data: {
+                        type: 4,
+                        data: await createAPIMessage (interaction, stateResponseEmbed)
+                    }
+                });
+                break;
+    
+                case 'uwu':
+                let uwuResponseEmbed;
+                if (args && args.length) {
+                    let uwuLevel = args.find (arg => arg.name === 'level').value;
+                    serverSettings [`${interaction.guild_id}.txt`].owo = uwuLevel
+                    uwuResponseEmbed = basicEmbed ()
+                            .setTitle (`uwu set to ${serverSettings [`${interaction.guild_id}.txt`].owo}`)
+                            .setThumbnail (null);
+                } else {
+                    uwuResponseEmbed = basicEmbed ()
+                            .setTitle (`current uwu level: ${serverSettings [`${interaction.guild_id}.txt`].owo}`)
+                            .setThumbnail (null);
+                }
+    
+                client.api.interactions (interaction.id, interaction.token).callback.post ({
+                    data: {
+                        type: 4,
+                        data: await createAPIMessage (interaction, uwuResponseEmbed)
+                    }
+                });
+                break;
+    
+                case 'chain':
+                let reply = chains [`${interaction.guild_id}.txt`].generate ({ grams: 10 });
+                client.api.interactions (interaction.id, interaction.token).callback.post ({
+                    data: {
+                        type: 4,
+                        data: {
+                            content: reply
+                        }
+                    }
+                });
+                break;
+            }
+        } else {
+            let user = client.users.cache.get (interaction.member.user.id);
+            if (user) {
+                user.send ('You cannot use markovbot commands outside of #markovbot 🙁');
+            }
+        }
+    });
+    // </slash commands>
 });
 
 client.on ('message', msg => {
     if (msg.channel.name === "markovbot" && msg.author.id != client.user.id) {
-        if (msg.author.bot && !config.replyToBots) return;
+        if (msg.author.bot && !config.replyToBots || msg.toString ().startsWith ('</')) return;
         if (msg.toString ().startsWith ('mk-')) processCommand (msg);
         else replyToMessage (msg);
     }
