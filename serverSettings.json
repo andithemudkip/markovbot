@@ -1,0 +1,42 @@
+{
+    "205978604826394624.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": true
+    },
+    "263855635731447808.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": true
+    },
+    "437364436630634537.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": true
+    },
+    "438590624162250752.txt": {
+        "currentState": "RANDOM",
+        "owo": 1,
+        "mentions": true
+    },
+    "546575456988692481.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": false
+    },
+    "683827277985087549.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": true
+    },
+    "745087919764668416.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": true
+    },
+    "851802737662099456.txt": {
+        "currentState": "FIRST_OR_LAST",
+        "owo": 1,
+        "mentions": true
+    }
+}

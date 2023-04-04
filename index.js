@@ -11,7 +11,7 @@ const owoify = require ('owoify-js').default;
 const chains = {};
 const buffers = {};
 // const currentStates = {};
-const serverSettings = {};
+
 
 const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM"];
 
@@ -29,6 +29,11 @@ console.timeEnd = str => {
 
 let consoleLog = (...arg) => console.log (`[${new Date ().toISOString ()}] `, ...arg);
 // </utility overrides>
+let serverSettings = {};
+
+if (fs.existsSync (`serverSettings.json`)) serverSettings = JSON.parse (fs.readFileSync ('serverSettings.json', 'utf8'));
+
+consoleLog (`server settings: `, serverSettings);
 
 const servers = fs.readdirSync ('servers');
 consoleLog ('servers: ', `${servers.join (', ')}`);
@@ -36,11 +41,17 @@ consoleLog ('servers: ', `${servers.join (', ')}`);
 const initChain = ch => {
     console.time (`initialize chain for server ${ch}`);
     buffers [ch] = [];
-    // currentStates [ch] = states [0];
     
-    serverSettings [ch] = {
-        currentState: states [0],
-        owo: 1
+    if (!serverSettings [ch]) {
+        serverSettings [ch] = {
+            currentState: states [0],
+            owo: 1,
+            mentions: true
+        }
+    } else {
+        if (!serverSettings [ch].hasOwnProperty ('currentState')) serverSettings [ch].currentState = states [0];
+        if (!serverSettings [ch].hasOwnProperty ('owo')) serverSettings [ch].currentState = 1;
+        if (!serverSettings [ch].hasOwnProperty ('mentions')) serverSettings [ch].mentions = true;
     }
     if (!fs.existsSync (`./chains/${ch}`)) {
         consoleLog ('from msg file');
@@ -95,6 +106,7 @@ const updateServerFiles = () => {
     for (let i = 0; i < servers.length; i++) {
         fs.appendFileSync (`./servers/${servers [i]}`, buffers [servers [i]].join (''));
         fs.writeFileSync (`./chains/${servers [i]}`, chains [servers [i]].toString ());
+        fs.writeFileSync (`serverSettings.json`, JSON.stringify (serverSettings));
         buffers [servers [i]] = [];
     }
     
@@ -152,7 +164,9 @@ const replyToMessage = msg => {
                 reply = owoify (reply, 'uvu');
                 break;
             }
-            msg.channel.send (reply);
+
+            const mentions = serverSettings [`${msg.guild.id}.txt`].mentions;
+            msg.channel.send (reply, { disableMentions: mentions ? 'none' : 'all' });
         } else {
             msg.react ("markov_what:620612190902157343").catch (err => {
                 msg.react ("❓");
@@ -238,6 +252,38 @@ const processCommand = msg => {
         msg.channel.send (reply);
         break;
 
+        case 'mentions':
+        if (msg.member.hasPermission ('MANAGE_ROLES')) {
+            if (commParts.length == 1) {
+                msg.channel.send (
+                    basicEmbed ()
+                        .setTitle ("mentions")
+                        .setDescription ("Enable or disable the bot's ability to mention roles or people.")
+                        .addFields ({
+                            name: "Current setting:",
+                            value: serverSettings [`${msg.guild.id}.txt`].mentions ? 1 : 0
+                        }, {
+                            name: "Available options",
+                            value: "0 - OFF\n1 - ON"
+                        }, {
+                            name: "Changing the setting",
+                            value: "Type `mk-mentions <number>` to change the setting"
+                        })
+                )
+            } else {
+                let s = Number (commParts [1]);
+                if (s === 0 || s === 1) {
+                    serverSettings [`${msg.guild.id}.txt`].mentions = [false, true] [Number (commParts [1])];
+                    msg.channel.send (
+                        basicEmbed ()
+                            .setTitle (`set mentions to ${[false, true] [Number (commParts [1])]}`)
+                            .setThumbnail (null)
+                    )
+                } else msg.react ('🚫');
+            }
+        }
+        break;
+
         case 'pin':
         if (msg.member.hasPermission ('MANAGE_MESSAGES')) {
             let id;
@@ -304,7 +350,7 @@ const processCommand = msg => {
 
 new Task ()
     .do (updateServerFiles)
-    .every (config.updateServerFilesInterval).second ()
+    .every (config.updateServerFilesInterval).minute ()
     .start ();
 
 if (!fs.existsSync ('./servers/')) fs.mkdirSync ('./servers/');
@@ -393,6 +439,19 @@ client.on ('ready', () => {
             }]
         }
     }).then (() => consoleLog ('created /uwu command')).catch (error => consoleLog ('err creating /uwu command', error));
+
+    // client.api.applications (client.user.id).commands.post ({
+    //     data: {
+    //         name: "mentions",
+    //         description: "Enabled or disable the bot's ability to mention roles or people",
+    //         options: [{
+    //             type: 6,
+    //             required: true,
+    //             name: 'mentions',
+    //             description: 'Allow the bot to mention roles/people?'
+    //         }]
+    //     }
+    // }).then (() => consoleLog ('created /mentions command')).catch (error => consoleLog ('err creating /mentions command', error));
 
     client.api.applications (client.user.id).commands.post ({
         data: {
