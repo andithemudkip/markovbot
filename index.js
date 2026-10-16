@@ -50,7 +50,9 @@ if (fs.existsSync (`serverSettings.json`)) serverSettings = JSON.parse (fs.readF
 
 consoleLog (`server settings: `, serverSettings);
 
-const servers = fs.readdirSync ('servers');
+if (!fs.existsSync ('./servers/')) fs.mkdirSync ('./servers/');
+// One <server id>.txt log per server; skip anything else, like the .DS_Store files macOS creates
+const servers = fs.readdirSync ('servers').filter (file => /^\d+\.txt$/.test (file));
 consoleLog ('servers: ', `${servers.join (', ')}`);
 
 const initChain = ch => {
@@ -357,9 +359,6 @@ new Task ()
     .do (updateServerFiles)
     .every (config.updateServerFilesInterval).second ()
     .start ();
-
-if (!fs.existsSync ('./servers/')) fs.mkdirSync ('./servers/');
-if (!fs.existsSync ('./chains/')) fs.mkdirSync ('./chains/');
 
 console.time ('initial init');
 // initial init
