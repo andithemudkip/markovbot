@@ -44,7 +44,8 @@ const handleUpdate = async msg => {
         messageAdmins ('Received update command; no files provided.');
         return;
     }
-    if (attachments.length !== 1 || !attachments [0].url.endsWith ('.zip')) {
+    // Check the file name: attachment URLs carry query parameters after the extension
+    if (attachments.length !== 1 || !attachments [0].name.toLowerCase ().endsWith ('.zip')) {
         messageAdmins ('Updates must be a single .zip attachment.');
         return;
     }

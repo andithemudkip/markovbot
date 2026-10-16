@@ -1,8 +1,18 @@
-const Discord = require ('discord.js');
-const client = new Discord.Client ();
+const {
+    Client, GatewayIntentBits, Partials, Events, EmbedBuilder, PermissionFlagsBits, ActivityType,
+    ApplicationCommandOptionType, InteractionContextType, MessageFlags, GatewayCloseCodes, DiscordjsErrorCodes
+} = require ('discord.js');
+const client = new Client ({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages
+    ],
+    // DM channels aren't cached, so DM messages arrive as partials without this
+    partials: [Partials.Channel]
+});
 const fs = require ('fs');
-
-const { Task } = require ('@alpha-manager/core');
 
 const MarkovChain = require ('./markov-util.js');
 
@@ -128,32 +138,36 @@ const onNewMessage = msg => {
         let filename = `${msg.guild.id}.txt`;
 
         if (!servers.includes (filename)) {
-            fs.writeFileSync (`./servers/${filename}`, msg.toString () + '\n');
+            fs.writeFileSync (`./servers/${filename}`, msg.content + '\n');
             servers.push (filename);
             initChain (filename);
         } else {
-            buffers [filename].push (msg.toString () + '\n');
-            chains [filename].update (msg.toString ());
+            buffers [filename].push (msg.content + '\n');
+            chains [filename].update (msg.content);
         }
     } else {
-        if (msg.toString ().startsWith ('mk-update') && config.admins.includes (msg.author.id)) {
-            process.send ({ messageType: 'UPDATE' , ...msg });
+        if (msg.content.startsWith ('mk-update') && config.admins.includes (msg.author.id)) {
+            process.send ({
+                messageType: 'UPDATE',
+                author: { id: msg.author.id },
+                attachments: msg.attachments.map (a => ({ url: a.url, name: a.name }))
+            });
         } else {
-            msg.reply (`don't dm me`);
+            msg.reply (`don't dm me`).catch (logError ('DM reply'));
         }
     }
 }
 
 const replyToMessage = msg => {
     if (chains [`${msg.guild.id}.txt`]) {
-        let msgText = textBasedOnState (msg.toString (), serverSettings [`${msg.guild.id}.txt`].currentState);
+        let msgText = textBasedOnState (msg.content, serverSettings [`${msg.guild.id}.txt`].currentState);
         let reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText });
 
-        if (!reply || reply == msg.toString ()) {
+        if (!reply || reply == msg.content) {
             reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText });
         }
 
-        if (reply && reply != msg.toString ()) {
+        if (reply && reply != msg.content) {
             switch (serverSettings [`${msg.guild.id}.txt`].owo) {
                 case 2:
                 reply = uwu (reply);
@@ -173,27 +187,32 @@ const replyToMessage = msg => {
             }
 
             const mentions = serverSettings [`${msg.guild.id}.txt`].mentions;
-            msg.channel.send (reply, { disableMentions: mentions ? 'none' : 'all' });
+            msg.channel.send ({ content: reply, allowedMentions: mentions ? undefined : { parse: [] } }).catch (logError ('reply'));
         } else {
             msg.react ("markov_what:620612190902157343").catch (err => {
-                msg.react ("❓");
+                msg.react ("❓").catch (logError ('react'));
             });
         }
     }
 }
 
-let createAPIMessage = async (interaction, content) => {
-    const apiMessage = await Discord.APIMessage.create (client.channels.resolve (interaction.channel_id), content)
-        .resolveData ()
-        .resolveFiles ()
+// Log failed Discord requests (e.g. missing permissions) instead of letting them crash the bot
+const logError = what => err => consoleLog (`failed to ${what}:`, err.message);
 
-    return { ...apiMessage.data, files: apiMessage.files };
-}
-
-const basicEmbed = () => new Discord.MessageEmbed ()
+const basicEmbed = () => new EmbedBuilder ()
                             .setColor ("#ff00ff")
                             .setThumbnail ('https://cdn.discordapp.com/avatars/787354572452266024/8fa42be5ca295af674cdcb0c461bb803.png?size=64')
-                            .setFooter ("MarkovBot v2.1 by andithemudkip. Original bot by Dazzi.\nSponsored by Hiitchy.");
+                            .setFooter ({ text: "MarkovBot v2.1 by andithemudkip. Original bot by Dazzi.\nSponsored by Hiitchy." });
+
+// Shown when a server has no chain yet, or it can't produce anything
+const NOTHING_TO_SAY = "I don't know enough words in this server yet.";
+
+const generateRandom = guildId => (chains [`${guildId}.txt`] && chains [`${guildId}.txt`].generate ()) || NOTHING_TO_SAY;
+
+const countLines = guildId => {
+    const file = `./servers/${guildId}.txt`;
+    return fs.existsSync (file) ? fs.readFileSync (file, 'utf8').split ('\n').length : 0;
+}
 
 
 const helpEmbed = basicEmbed ()
@@ -205,16 +224,20 @@ const helpEmbed = basicEmbed ()
                 });
 
 const processCommand = msg => {
-    let command = msg.toString ().substring (3);
+    // Commands need the server's settings, and a member to check permissions on (webhooks have none)
+    if (!serverSettings [`${msg.guild.id}.txt`] || !msg.member) return;
+    const send = content => msg.channel.send (content).catch (logError (`respond to ${command}`));
+    const react = emoji => msg.react (emoji).catch (logError ('react'));
+    let command = msg.content.substring (3);
     let commParts = command.split (' ');
     switch (commParts [0]) {
         case 'help':
-        msg.channel.send (helpEmbed);
+        send ({ embeds: [helpEmbed] });
         break;
 
         case 'state':
         if (commParts.length == 1) {
-            msg.channel.send (
+            send ({ embeds: [
                 basicEmbed ()
                     .setTitle ("Chaining State")
                     .setDescription ("This setting tells the bot which words of your message it should use to form a sentence.")
@@ -228,47 +251,45 @@ const processCommand = msg => {
                         name: "Changing the state",
                         value: "Type `mk-state <number>` to change the state"
                     })
-            )
+            ] })
         } else {
             let s = Number (commParts [1]);
             if (s >= 1 && s <= 5) {
                 serverSettings [`${msg.guild.id}.txt`].currentState = states [s - 1];
-                msg.channel.send (
+                send ({ embeds: [
                     basicEmbed ()
                         .setTitle ("State set to `" + serverSettings [`${msg.guild.id}.txt`].currentState + "`")
                         .setThumbnail (null)
-                )
+                ] })
             } else {
-                msg.react ('🚫');
+                react ('🚫');
             }
             
         }
         break;
 
         case 'lines':
-        let l = fs.readFileSync (`./servers/${msg.guild.id}.txt`, 'utf8').split ('\n');
-        msg.channel.send (
+        send ({ embeds: [
             basicEmbed ()
                 .setThumbnail (null)
-                .setTitle (`\`${l.length}\` lines found in text file.`)
-        )
+                .setTitle (`\`${countLines (msg.guild.id)}\` lines found in text file.`)
+        ] })
         break;
 
         case 'chain':
-        let reply = chains [`${msg.guild.id}.txt`].generate ();
-        msg.channel.send (reply);
+        send (generateRandom (msg.guild.id));
         break;
 
         case 'mentions':
-        if (msg.member.hasPermission ('MANAGE_ROLES')) {
+        if (msg.member.permissions.has (PermissionFlagsBits.ManageRoles)) {
             if (commParts.length == 1) {
-                msg.channel.send (
+                send ({ embeds: [
                     basicEmbed ()
                         .setTitle ("mentions")
                         .setDescription ("Enable or disable the bot's ability to mention roles or people.")
                         .addFields ({
                             name: "Current setting:",
-                            value: serverSettings [`${msg.guild.id}.txt`].mentions ? 1 : 0
+                            value: serverSettings [`${msg.guild.id}.txt`].mentions ? '1' : '0'
                         }, {
                             name: "Available options",
                             value: "0 - OFF\n1 - ON"
@@ -276,62 +297,63 @@ const processCommand = msg => {
                             name: "Changing the setting",
                             value: "Type `mk-mentions <number>` to change the setting"
                         })
-                )
+                ] })
             } else {
                 let s = Number (commParts [1]);
                 if (s === 0 || s === 1) {
                     serverSettings [`${msg.guild.id}.txt`].mentions = [false, true] [Number (commParts [1])];
-                    msg.channel.send (
+                    send ({ embeds: [
                         basicEmbed ()
                             .setTitle (`set mentions to ${[false, true] [Number (commParts [1])]}`)
                             .setThumbnail (null)
-                    )
-                } else msg.react ('🚫');
+                    ] })
+                } else react ('🚫');
             }
         }
         break;
 
         case 'pin':
-        if (msg.member.hasPermission ('MANAGE_MESSAGES')) {
+        if (msg.member.permissions.has (PermissionFlagsBits.ManageMessages)) {
             let id;
-            if (msg.reference) id = msg.reference.messageID;
+            if (msg.reference) id = msg.reference.messageId;
             else if (commParts.length == 2) id = commParts [1];
             if (id) {
                 msg.channel.messages.fetch (id).then (messageToPin => {
                     if (messageToPin.author.id === client.user.id) {
                         let pinChannel = msg.guild.channels.cache.find (ch => ch.name === 'markovbot-pins');
                         if (pinChannel) {
-                            let originalText = messageToPin.toString ();
-                            let linkToMessage = `https://discordapp.com/channels/${messageToPin.guild.id}/${messageToPin.channel.id}/${id}`;
-                            let authorAvatar = `https://cdn.discordapp.com/avatars/${messageToPin.author.id}/${client.user.avatar}.png`;
-                            pinChannel.send (
+                            let originalText = messageToPin.content;
+                            let linkToMessage = messageToPin.url;
+                            pinChannel.send ({ embeds: [
                                 basicEmbed ()
-                                    .setAuthor (messageToPin.author.username, authorAvatar, linkToMessage)
+                                    .setAuthor ({ name: messageToPin.author.username, iconURL: client.user.displayAvatarURL (), url: linkToMessage })
                                     .setDescription (`${originalText}\n\n[Go to original](${linkToMessage})`)
-                                    .setFooter (`Pinned by ${msg.author.username}#${msg.author.discriminator} | #${messageToPin.channel.name} | ${messageToPin.guild.name}`)
+                                    .setFooter ({ text: `Pinned by ${msg.author.tag} | #${messageToPin.channel.name} | ${messageToPin.guild.name}` })
                                     .setThumbnail (null)
-                            );
-                            msg.react ("👌");
+                            ] }).then (() => react ("👌")).catch (err => {
+                                logError ('pin message') (err);
+                                react ('🚫');
+                            });
                         } else {
-                            msg.reply ('there is no `markovbot-pins` channel on this server.');
+                            msg.reply ('there is no `markovbot-pins` channel on this server.').catch (logError ('reply'));
                         }
-                    } else msg.react ('🚫');
+                    } else react ('🚫');
                 }).catch (err => {
-                    msg.react ('🚫');
+                    react ('🚫');
                 });
-            } else msg.react ('🚫');
-        } else msg.react ('🚫');
+            } else react ('🚫');
+        } else react ('🚫');
         break;
 
         case 'uwu':
         if (commParts.length == 1) {
-            msg.channel.send (
+            send ({ embeds: [
                 basicEmbed ()
                     .setTitle ("uwu")
                     .setDescription ("How uwuified should the bot's messages be?")
                     .addFields ({
                         name: "Current uwu level",
-                        value: serverSettings [`${msg.guild.id}.txt`].owo
+                        value: String (serverSettings [`${msg.guild.id}.txt`].owo)
                     }, {
                         name: "Levels",
                         value: "1 - OFF\n2 - LIGHT\n3 - MEDIUM\n4 - HARD\n5 - UVU"
@@ -339,26 +361,23 @@ const processCommand = msg => {
                         name: "Changing the uwu level",
                         value: "Type `mk-uwu <number>` to change the uwu level"
                     })
-            )
+            ] })
         } else {
             let s = Number (commParts [1]);
             if (s >= 1 && s <= 5) {
                 serverSettings [`${msg.guild.id}.txt`].owo = Number (commParts [1]);
-                msg.channel.send (
+                send ({ embeds: [
                     basicEmbed ()
                         .setTitle (`uwu set to ${serverSettings [`${msg.guild.id}.txt`].owo}`)
                         .setThumbnail (null)
-                )
-            } else msg.react ('🚫');
+                ] })
+            } else react ('🚫');
         }
         break;
     }
 }
 
-new Task ()
-    .do (updateServerFiles)
-    .every (config.updateServerFilesInterval).second ()
-    .start ();
+setInterval (updateServerFiles, config.updateServerFilesInterval * 1000);
 
 console.time ('initial init');
 // initial init
@@ -405,200 +424,113 @@ process.on ('message', msg => {
 });
 
 
-client.on ('ready', () => {
+const stateChoices = ['FIRST OR LAST', 'FIRST WORD/S ONLY', 'FIRST ONLY', 'LAST ONLY', 'RANDOM'];
+const uwuChoices = ['OFF', 'LIGHT', 'MEDIUM', 'HARD', 'UVU'];
+const choicesFrom = names => names.map ((name, i) => ({ name, value: i + 1 }));
+
+// Registered globally on startup; set () replaces the whole list, so removed commands disappear too
+const slashCommands = [{
+    name: "help",
+    description: "Displays the help message for Markovbot"
+}, {
+    name: "lines",
+    description: "Displays the number of lines in the server's text file"
+}, {
+    name: "state",
+    description: "The MarkovBot chaining state for this server",
+    options: [{
+        type: ApplicationCommandOptionType.Integer,
+        required: false,
+        name: 'state',
+        description: 'Set the state to set for this server',
+        choices: choicesFrom (stateChoices)
+    }]
+}, {
+    name: "uwu",
+    description: "The uwu level for MarkovBot's messages in this server",
+    options: [{
+        type: ApplicationCommandOptionType.Integer,
+        required: false,
+        name: 'level',
+        description: 'The uwu level',
+        choices: choicesFrom (uwuChoices)
+    }]
+}, {
+    name: "chain",
+    description: "Generates a random sentence without a prompt"
+}].map (command => ({ ...command, contexts: [InteractionContextType.Guild] }));
+
+client.once (Events.ClientReady, () => {
     consoleLog (`Logged in as ${client.user.tag}!`);
-    client.user.setActivity ("you type | mk-help", { type: "WATCHING" });
+    client.user.setActivity ("you type | mk-help", { type: ActivityType.Watching });
     if (process.send) process.send ({ messageType: 'READY' });
 
-
-    // <slash commands>
-    client.api.applications (client.user.id).commands.post ({
-        data: {
-            name: "help",
-            description: "Displays the help message for Markovbot"
-        }
-    }).then (() => consoleLog ('created /help command')).catch (error => consoleLog ('err creating /help command', error));
-
-    client.api.applications (client.user.id).commands.post ({
-        data: {
-            name: "lines",
-            description: "Displays the number of lines in the server's text file"
-        }
-    }).then (() => consoleLog ('created /lines command')).catch (error => consoleLog ('err creating /lines command', error));
-
-
-    client.api.applications (client.user.id).commands.post ({
-        data: {
-            name: "state",
-            description: "The MarkovBot chaining state for this server",
-            options: [{
-                type: 4,
-                required: false,
-                name: 'state',
-                description: 'Set the state to set for this server',
-                choices: [
-                    { value: 1, name: 'FIRST OR LAST' },
-                    { value: 2, name: 'FIRST WORD/S ONLY' },
-                    { value: 3, name: 'FIRST ONLY' },
-                    { value: 4, name: 'LAST ONLY' },
-                    { value: 5, name: 'RANDOM' }
-                ]
-            }]
-        }
-    }).then (() => consoleLog ('created /state command')).catch (error => consoleLog ('err creating /state command', error));
-
-    client.api.applications (client.user.id).commands.post ({
-        data: {
-            name: "uwu",
-            description: "The uwu level for MarkovBot's messages in this server",
-            options: [{
-                type: 4,
-                required: false,
-                name: 'level',
-                description: 'The uwu level',
-                choices: [
-                    { value: 1, name: 'OFF' },
-                    { value: 2, name: 'LIGHT' },
-                    { value: 3, name: 'MEDIUM' },
-                    { value: 4, name: 'HARD' },
-                    { value: 5, name: 'UVU' }
-                ]
-            }]
-        }
-    }).then (() => consoleLog ('created /uwu command')).catch (error => consoleLog ('err creating /uwu command', error));
-
-    // client.api.applications (client.user.id).commands.post ({
-    //     data: {
-    //         name: "mentions",
-    //         description: "Enabled or disable the bot's ability to mention roles or people",
-    //         options: [{
-    //             type: 6,
-    //             required: true,
-    //             name: 'mentions',
-    //             description: 'Allow the bot to mention roles/people?'
-    //         }]
-    //     }
-    // }).then (() => consoleLog ('created /mentions command')).catch (error => consoleLog ('err creating /mentions command', error));
-
-    client.api.applications (client.user.id).commands.post ({
-        data: {
-            name: "chain",
-            description: "Generates a random sentence without a prompt"
-        }
-    }).then (() => consoleLog ('created /chain command')).catch (error => consoleLog ('err creating /chain command', error));
-
-
-    // delete command
-    // let toDelete = ['790934440846557184', '790937004627066892']
-    // client.api.applications (client.user.id).guilds ('205978604826394624').commands ('790932675413671956').delete ().then (console.log).catch (console.error);
-    // list commands
-    // client.api.applications (client.user.id).commands.get ().then (res => {
-    //     // console.log (res);
-    //     for (let command of res) {
-    //         client.api.applications (client.user.id).commands (command.id).delete ().then (console.log).catch (console.error);
-    //     }
-    // }).catch (console.error);
-
-
-    client.ws.on ('INTERACTION_CREATE', async interaction => {
-        const command = interaction.data.name.toLowerCase ();
-        const args = interaction.data.options;
-
-        let channel = client.channels.cache.find (ch => ch.id === interaction.channel_id);
-        if (channel.name === 'markovbot') {
-            switch (command) {
-                case 'help':
-                client.api.interactions (interaction.id, interaction.token).callback.post ({
-                    data: {
-                        type: 4,
-                        data: await createAPIMessage (interaction, helpEmbed)
-                    }
-                });
-                break;
-    
-                case 'lines':
-                let l = fs.readFileSync (`./servers/${interaction.guild_id}.txt`, 'utf8').split ('\n');
-                let linesEmbed = basicEmbed ()
-                        .setThumbnail (null)
-                        .setTitle (`\`${l.length}\` lines found in text file.`);
-                client.api.interactions (interaction.id, interaction.token).callback.post ({
-                    data: {
-                        type: 4,
-                        data: await createAPIMessage (interaction, linesEmbed)
-                    }
-                });
-                break;
-    
-                case 'state':
-                let stateResponseEmbed;
-                if (args && args.length) {
-                    let stateToSet = args.find (arg => arg.name === 'state').value;
-                    serverSettings [`${interaction.guild_id}.txt`].currentState = states [stateToSet - 1];
-                    stateResponseEmbed = basicEmbed ()
-                            .setTitle ("State set to `" + serverSettings [`${interaction.guild_id}.txt`].currentState + "`")
-                            .setThumbnail (null);
-                } else {
-                    stateResponseEmbed = basicEmbed ()
-                        .setTitle (`The current state is \`${ serverSettings [`${interaction.guild_id}.txt`].currentState }\``)
-                        .setThumbnail (null);
-                }
-                
-                client.api.interactions (interaction.id, interaction.token).callback.post ({
-                    data: {
-                        type: 4,
-                        data: await createAPIMessage (interaction, stateResponseEmbed)
-                    }
-                });
-                break;
-    
-                case 'uwu':
-                let uwuResponseEmbed;
-                if (args && args.length) {
-                    let uwuLevel = args.find (arg => arg.name === 'level').value;
-                    serverSettings [`${interaction.guild_id}.txt`].owo = uwuLevel
-                    uwuResponseEmbed = basicEmbed ()
-                            .setTitle (`uwu set to ${serverSettings [`${interaction.guild_id}.txt`].owo}`)
-                            .setThumbnail (null);
-                } else {
-                    uwuResponseEmbed = basicEmbed ()
-                            .setTitle (`current uwu level: ${serverSettings [`${interaction.guild_id}.txt`].owo}`)
-                            .setThumbnail (null);
-                }
-    
-                client.api.interactions (interaction.id, interaction.token).callback.post ({
-                    data: {
-                        type: 4,
-                        data: await createAPIMessage (interaction, uwuResponseEmbed)
-                    }
-                });
-                break;
-    
-                case 'chain':
-                let reply = chains [`${interaction.guild_id}.txt`].generate ();
-                client.api.interactions (interaction.id, interaction.token).callback.post ({
-                    data: {
-                        type: 4,
-                        data: {
-                            content: reply
-                        }
-                    }
-                });
-                break;
-            }
-        } else {
-            let user = client.users.cache.get (interaction.member.user.id);
-            if (user) {
-                user.send ('You cannot use markovbot commands outside of #markovbot 🙁');
-            }
-        }
-    });
-    // </slash commands>
+    client.application.commands.set (slashCommands)
+        .then (commands => consoleLog (`registered slash commands: ${commands.map (c => '/' + c.name).join (', ')}`))
+        .catch (error => consoleLog ('err registering slash commands', error));
 });
 
-client.on ('message', msg => {
+client.on (Events.InteractionCreate, interaction => {
+    if (!interaction.isChatInputCommand () || !interaction.guildId) return;
+
+    const respond = content => interaction.reply (content).catch (logError (`respond to /${interaction.commandName}`));
+
+    if (!interaction.channel || interaction.channel.name !== 'markovbot') {
+        respond ({ content: 'You cannot use markovbot commands outside of #markovbot 🙁', flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    const settings = serverSettings [`${interaction.guildId}.txt`];
+    if (!settings && interaction.commandName !== 'help') {
+        respond ({ content: NOTHING_TO_SAY, flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    switch (interaction.commandName) {
+        case 'help':
+        respond ({ embeds: [helpEmbed] });
+        break;
+
+        case 'lines':
+        respond ({ embeds: [
+            basicEmbed ()
+                .setThumbnail (null)
+                .setTitle (`\`${countLines (interaction.guildId)}\` lines found in text file.`)
+        ] });
+        break;
+
+        case 'state': {
+            const stateToSet = interaction.options.getInteger ('state');
+            if (stateToSet) settings.currentState = states [stateToSet - 1];
+            respond ({ embeds: [
+                basicEmbed ()
+                    .setTitle (stateToSet ? "State set to `" + settings.currentState + "`" : `The current state is \`${settings.currentState}\``)
+                    .setThumbnail (null)
+            ] });
+            break;
+        }
+
+        case 'uwu': {
+            const uwuLevel = interaction.options.getInteger ('level');
+            if (uwuLevel) settings.owo = uwuLevel;
+            respond ({ embeds: [
+                basicEmbed ()
+                    .setTitle (uwuLevel ? `uwu set to ${settings.owo}` : `current uwu level: ${settings.owo}`)
+                    .setThumbnail (null)
+            ] });
+            break;
+        }
+
+        case 'chain':
+        respond ({ content: generateRandom (interaction.guildId) });
+        break;
+    }
+});
+
+client.on (Events.MessageCreate, msg => {
     if (msg.channel.name === "markovbot" && msg.author.id != client.user.id) {
-        if (msg.author.bot && !config.replyToBots || msg.toString ().startsWith ('</')) return;
-        if (msg.toString ().startsWith ('mk-')) processCommand (msg);
+        if (msg.author.bot && !config.replyToBots || msg.content.startsWith ('</')) return;
+        if (msg.content.startsWith ('mk-')) processCommand (msg);
         else replyToMessage (msg);
     }
     if (msg.author.id != client.user.id) {
@@ -606,10 +538,25 @@ client.on ('message', msg => {
     }
 });
 
-client.login (process.env.DISCORD_TOKEN).catch (err => {
-    if (err.code === 'TOKEN_INVALID') {
+// Discord closes the connection with these when the token or the bot's settings are wrong; retrying won't help
+client.on (Events.ShardDisconnect, ({ code }) => {
+    if (code === GatewayCloseCodes.AuthenticationFailed) {
         console.error ('Discord rejected DISCORD_TOKEN as invalid. Check the token in .env or the environment.');
         process.exit (EXIT_CONFIG_ERROR);
     }
-    throw err;
+    if (code === GatewayCloseCodes.DisallowedIntents) {
+        console.error ('Discord refused the Message Content intent. Enable "Message Content Intent" under Bot > Privileged Gateway Intents in the Discord Developer Portal.');
+        process.exit (EXIT_CONFIG_ERROR);
+    }
+});
+
+client.on (Events.Error, err => consoleLog ('client error', err));
+
+client.login (process.env.DISCORD_TOKEN).catch (err => {
+    if (err.code === DiscordjsErrorCodes.TokenInvalid) {
+        console.error ('Discord rejected DISCORD_TOKEN as invalid. Check the token in .env or the environment.');
+        process.exit (EXIT_CONFIG_ERROR);
+    }
+    consoleLog ('login failed', err);
+    process.exit (1);
 });

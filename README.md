@@ -22,6 +22,7 @@ Create a `config.json` file with the following structure:
 ```sh
 $ npm start
 ```
+In the [Discord Developer Portal](https://discord.com/developers/applications), enable **Message Content Intent** under *Bot → Privileged Gateway Intents*; the bot can't read messages without it.
 ## Using the bot
 * Add the bot to your server
 * Create a `markovbot` channel (must be exactly this)
