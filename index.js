@@ -245,158 +245,114 @@ const helpEmbed = basicEmbed ()
                     value: "`mk-help` - shows this message\n`mk-state [<state>]` - if no state is provided, it displays the possible states; otherwise, sets the chaining state to the one specified\n`mk-lines` - displays the number of lines in the dataset for the current server\n`mk-chain` - generates a random string\n`mk-pin` - replying to a message sent by Markov with `mk-pin` will pin the message in the server's `markovbot-pins` channel (if it exists); alternatively, you can do `mk-pin <message_id>`\n`mk-uwu [<level>]` - if no level is provided it shows the current level and all possible settings; if one is provided it sets the bot's uwu level to the one specified"
                 });
 
-const processCommand = msg => {
-    // Commands need the server's settings, and a member to check permissions on (webhooks have none)
-    if (!serverSettings [`${msg.guild.id}.txt`] || !msg.member) return;
-    const send = content => msg.channel.send (content).catch (logError (`respond to ${command}`));
-    const react = emoji => msg.react (emoji).catch (logError ('react'));
-    let command = msg.content.substring (3);
-    let commParts = command.split (' ');
-    switch (commParts [0]) {
-        case 'help':
-        send ({ embeds: [helpEmbed] });
-        break;
+const uwuLevels = ['OFF', 'LIGHT', 'MEDIUM', 'HARD', 'UVU'];
+const numberedList = names => names.map ((name, i) => `${i + 1} - ${name}`).join ('\n');
+const settingEmbed = (title, description, fields) => basicEmbed ().setTitle (title).setDescription (description).addFields (fields);
+const confirmEmbed = title => basicEmbed ().setTitle (title).setThumbnail (null);
 
-        case 'state':
-        if (commParts.length == 1) {
-            send ({ embeds: [
-                basicEmbed ()
-                    .setTitle ("Chaining State")
-                    .setDescription ("This setting tells the bot which words of your message it should use to form a sentence.")
-                    .addFields ({
-                        name: "Current State",
-                        value: serverSettings [`${msg.guild.id}.txt`].currentState
-                    }, {
-                        name: "States",
-                        value: "1 - FIRST_OR_LAST\n2 - FIRST_WORD/S_ONLY\n3 - FIRST_ONLY\n4 - LAST_ONLY\n5 - RANDOM"
-                    }, {
-                        name: "Changing the state",
-                        value: "Type `mk-state <number>` to change the state"
-                    })
-            ] })
-        } else {
-            let s = Number (commParts [1]);
-            if (s >= 1 && s <= 5) {
-                serverSettings [`${msg.guild.id}.txt`].currentState = states [s - 1];
-                send ({ embeds: [
-                    basicEmbed ()
-                        .setTitle ("State set to `" + serverSettings [`${msg.guild.id}.txt`].currentState + "`")
-                        .setThumbnail (null)
-                ] })
-            } else {
-                react ('🚫');
-            }
-            
-        }
-        break;
+// Commands shared by the mk- text commands and the slash commands. Each gets the server's id and settings,
+// the number the user gave (or null), and usage (), which spells a command the way the user invokes them.
+// Returns the response to send, or null if the number isn't valid.
+const commands = {
+    help: () => ({ embeds: [helpEmbed] }),
 
-        case 'lines':
-        send ({ embeds: [
-            basicEmbed ()
-                .setThumbnail (null)
-                .setTitle (`\`${countLines (msg.guild.id)}\` lines found in text file.`)
-        ] })
-        break;
+    lines: ({ guildId }) => ({ embeds: [confirmEmbed (`\`${countLines (guildId)}\` lines found in text file.`)] }),
 
-        case 'chain':
-        send (generateRandom (msg.guild.id));
-        break;
+    chain: ({ guildId }) => ({ content: generateRandom (guildId) }),
 
-        case 'mentions':
-        if (msg.member.permissions.has (PermissionFlagsBits.ManageRoles)) {
-            if (commParts.length == 1) {
-                send ({ embeds: [
-                    basicEmbed ()
-                        .setTitle ("mentions")
-                        .setDescription ("Enable or disable the bot's ability to mention roles or people.")
-                        .addFields ({
-                            name: "Current setting:",
-                            value: serverSettings [`${msg.guild.id}.txt`].mentions ? '1' : '0'
-                        }, {
-                            name: "Available options",
-                            value: "0 - OFF\n1 - ON"
-                        }, {
-                            name: "Changing the setting",
-                            value: "Type `mk-mentions <number>` to change the setting"
-                        })
-                ] })
-            } else {
-                let s = Number (commParts [1]);
-                if (s === 0 || s === 1) {
-                    serverSettings [`${msg.guild.id}.txt`].mentions = [false, true] [Number (commParts [1])];
-                    send ({ embeds: [
-                        basicEmbed ()
-                            .setTitle (`set mentions to ${[false, true] [Number (commParts [1])]}`)
-                            .setThumbnail (null)
-                    ] })
-                } else react ('🚫');
-            }
-        }
-        break;
+    state: ({ settings, value, usage }) => {
+        if (value === null) return { embeds: [
+            settingEmbed ("Chaining State", "This setting tells the bot which words of your message it should use to form a sentence.", [
+                { name: "Current State", value: settings.currentState },
+                { name: "States", value: numberedList (states) },
+                { name: "Changing the state", value: `Type ${usage ('state')} to change the state` }
+            ])
+        ] };
+        if (!Number.isInteger (value) || value < 1 || value > states.length) return null;
+        settings.currentState = states [value - 1];
+        return { embeds: [confirmEmbed ("State set to `" + settings.currentState + "`")] };
+    },
 
-        case 'pin':
-        if (msg.member.permissions.has (PermissionFlagsBits.ManageMessages)) {
-            let id;
-            if (msg.reference) id = msg.reference.messageId;
-            else if (commParts.length == 2) id = commParts [1];
-            if (id) {
-                msg.channel.messages.fetch (id).then (messageToPin => {
-                    if (messageToPin.author.id === client.user.id) {
-                        let pinChannel = msg.guild.channels.cache.find (ch => ch.name === 'markovbot-pins');
-                        if (pinChannel) {
-                            let originalText = messageToPin.content;
-                            let linkToMessage = messageToPin.url;
-                            pinChannel.send ({ embeds: [
-                                basicEmbed ()
-                                    .setAuthor ({ name: messageToPin.author.username, iconURL: client.user.displayAvatarURL (), url: linkToMessage })
-                                    .setDescription (`${originalText}\n\n[Go to original](${linkToMessage})`)
-                                    .setFooter ({ text: `Pinned by ${msg.author.tag} | #${messageToPin.channel.name} | ${messageToPin.guild.name}` })
-                                    .setThumbnail (null)
-                            ] }).then (() => react ("👌")).catch (err => {
-                                logError ('pin message') (err);
-                                react ('🚫');
-                            });
-                        } else {
-                            msg.reply ('there is no `markovbot-pins` channel on this server.').catch (logError ('reply'));
-                        }
-                    } else react ('🚫');
-                }).catch (err => {
-                    react ('🚫');
-                });
-            } else react ('🚫');
-        } else react ('🚫');
-        break;
+    uwu: ({ settings, value, usage }) => {
+        if (value === null) return { embeds: [
+            settingEmbed ("uwu", "How uwuified should the bot's messages be?", [
+                { name: "Current uwu level", value: String (settings.owo) },
+                { name: "Levels", value: numberedList (uwuLevels) },
+                { name: "Changing the uwu level", value: `Type ${usage ('uwu')} to change the uwu level` }
+            ])
+        ] };
+        if (!Number.isInteger (value) || value < 1 || value > uwuLevels.length) return null;
+        settings.owo = value;
+        return { embeds: [confirmEmbed (`uwu set to ${settings.owo}`)] };
+    },
 
-        case 'uwu':
-        if (commParts.length == 1) {
-            send ({ embeds: [
-                basicEmbed ()
-                    .setTitle ("uwu")
-                    .setDescription ("How uwuified should the bot's messages be?")
-                    .addFields ({
-                        name: "Current uwu level",
-                        value: String (serverSettings [`${msg.guild.id}.txt`].owo)
-                    }, {
-                        name: "Levels",
-                        value: "1 - OFF\n2 - LIGHT\n3 - MEDIUM\n4 - HARD\n5 - UVU"
-                    }, {
-                        name: "Changing the uwu level",
-                        value: "Type `mk-uwu <number>` to change the uwu level"
-                    })
-            ] })
-        } else {
-            let s = Number (commParts [1]);
-            if (s >= 1 && s <= 5) {
-                serverSettings [`${msg.guild.id}.txt`].owo = Number (commParts [1]);
-                send ({ embeds: [
-                    basicEmbed ()
-                        .setTitle (`uwu set to ${serverSettings [`${msg.guild.id}.txt`].owo}`)
-                        .setThumbnail (null)
-                ] })
-            } else react ('🚫');
-        }
-        break;
+    mentions: ({ settings, value, usage }) => {
+        if (value === null) return { embeds: [
+            settingEmbed ("mentions", "Enable or disable the bot's ability to mention roles or people.", [
+                { name: "Current setting:", value: settings.mentions ? '1' : '0' },
+                { name: "Available options", value: "0 - OFF\n1 - ON" },
+                { name: "Changing the setting", value: `Type ${usage ('mentions')} to change the setting` }
+            ])
+        ] };
+        if (value !== 0 && value !== 1) return null;
+        settings.mentions = value === 1;
+        return { embeds: [confirmEmbed (`set mentions to ${settings.mentions}`)] };
     }
+};
+
+// mk-pin: repost one of the bot's messages (the one replied to, or by id) in #markovbot-pins
+const pinMessage = (msg, id, react) => {
+    if (msg.reference) id = msg.reference.messageId;
+    if (!id) return react ('🚫');
+
+    msg.channel.messages.fetch (id).then (messageToPin => {
+        if (messageToPin.author.id !== client.user.id) return react ('🚫');
+
+        let pinChannel = msg.guild.channels.cache.find (ch => ch.name === 'markovbot-pins');
+        if (!pinChannel) {
+            msg.reply ('there is no `markovbot-pins` channel on this server.').catch (logError ('reply'));
+            return;
+        }
+        let linkToMessage = messageToPin.url;
+        pinChannel.send ({ embeds: [
+            basicEmbed ()
+                .setAuthor ({ name: messageToPin.author.username, iconURL: client.user.displayAvatarURL (), url: linkToMessage })
+                .setDescription (`${messageToPin.content}\n\n[Go to original](${linkToMessage})`)
+                .setFooter ({ text: `Pinned by ${msg.author.tag} | #${messageToPin.channel.name} | ${messageToPin.guild.name}` })
+                .setThumbnail (null)
+        ] }).then (() => react ("👌")).catch (err => {
+            logError ('pin message') (err);
+            react ('🚫');
+        });
+    }).catch (err => {
+        react ('🚫');
+    });
+}
+
+const processCommand = msg => {
+    const settings = serverSettings [`${msg.guild.id}.txt`];
+    // Commands need the server's settings, and a member to check permissions on (webhooks have none)
+    if (!settings || !msg.member) return;
+
+    const react = emoji => msg.react (emoji).catch (logError ('react'));
+    const [name, arg] = msg.content.substring (3).split (' ');
+
+    if (name === 'pin') {
+        if (msg.member.permissions.has (PermissionFlagsBits.ManageMessages)) pinMessage (msg, arg, react);
+        else react ('🚫');
+        return;
+    }
+    if (name === 'mentions' && !msg.member.permissions.has (PermissionFlagsBits.ManageRoles)) return;
+    if (!Object.hasOwn (commands, name)) return;
+
+    const response = commands [name] ({
+        guildId: msg.guild.id,
+        settings,
+        value: arg === undefined ? null : Number (arg),
+        usage: command => `\`mk-${command} <number>\``
+    });
+    if (response) msg.channel.send (response).catch (logError (`respond to mk-${name}`));
+    else react ('🚫');
 }
 
 setInterval (updateServerFiles, config.updateServerFilesInterval * 1000);
@@ -446,9 +402,9 @@ process.on ('message', msg => {
 });
 
 
-const stateChoices = ['FIRST OR LAST', 'FIRST WORD/S ONLY', 'FIRST ONLY', 'LAST ONLY', 'RANDOM'];
-const uwuChoices = ['OFF', 'LIGHT', 'MEDIUM', 'HARD', 'UVU'];
 const choicesFrom = names => names.map ((name, i) => ({ name, value: i + 1 }));
+// Which option of each slash command carries the number passed to the shared command
+const slashOptionNames = { state: 'state', uwu: 'level' };
 
 // Registered globally on startup; set () replaces the whole list, so removed commands disappear too
 const slashCommands = [{
@@ -463,9 +419,9 @@ const slashCommands = [{
     options: [{
         type: ApplicationCommandOptionType.Integer,
         required: false,
-        name: 'state',
+        name: slashOptionNames.state,
         description: 'Set the state to set for this server',
-        choices: choicesFrom (stateChoices)
+        choices: choicesFrom (states.map (state => state.replace (/_/g, ' ')))
     }]
 }, {
     name: "uwu",
@@ -473,9 +429,9 @@ const slashCommands = [{
     options: [{
         type: ApplicationCommandOptionType.Integer,
         required: false,
-        name: 'level',
+        name: slashOptionNames.uwu,
         description: 'The uwu level',
-        choices: choicesFrom (uwuChoices)
+        choices: choicesFrom (uwuLevels)
     }]
 }, {
     name: "chain",
@@ -531,7 +487,9 @@ const checkCommandAccess = async () => {
 client.on (Events.InteractionCreate, interaction => {
     if (!interaction.isChatInputCommand () || !interaction.guildId) return;
 
-    const respond = content => interaction.reply (content).catch (logError (`respond to /${interaction.commandName}`));
+    const name = interaction.commandName;
+    if (!slashCommands.some (command => command.name === name)) return;
+    const respond = content => interaction.reply (content).catch (logError (`respond to /${name}`));
 
     if (!interaction.channel || interaction.channel.name !== 'markovbot') {
         respond ({ content: 'You cannot use markovbot commands outside of #markovbot 🙁', flags: MessageFlags.Ephemeral });
@@ -539,50 +497,19 @@ client.on (Events.InteractionCreate, interaction => {
     }
 
     const settings = serverSettings [`${interaction.guildId}.txt`];
-    if (!settings && interaction.commandName !== 'help') {
+    if (!settings && name !== 'help') {
         respond ({ content: NOTHING_TO_SAY, flags: MessageFlags.Ephemeral });
         return;
     }
 
-    switch (interaction.commandName) {
-        case 'help':
-        respond ({ embeds: [helpEmbed] });
-        break;
-
-        case 'lines':
-        respond ({ embeds: [
-            basicEmbed ()
-                .setThumbnail (null)
-                .setTitle (`\`${countLines (interaction.guildId)}\` lines found in text file.`)
-        ] });
-        break;
-
-        case 'state': {
-            const stateToSet = interaction.options.getInteger ('state');
-            if (stateToSet) settings.currentState = states [stateToSet - 1];
-            respond ({ embeds: [
-                basicEmbed ()
-                    .setTitle (stateToSet ? "State set to `" + settings.currentState + "`" : `The current state is \`${settings.currentState}\``)
-                    .setThumbnail (null)
-            ] });
-            break;
-        }
-
-        case 'uwu': {
-            const uwuLevel = interaction.options.getInteger ('level');
-            if (uwuLevel) settings.owo = uwuLevel;
-            respond ({ embeds: [
-                basicEmbed ()
-                    .setTitle (uwuLevel ? `uwu set to ${settings.owo}` : `current uwu level: ${settings.owo}`)
-                    .setThumbnail (null)
-            ] });
-            break;
-        }
-
-        case 'chain':
-        respond ({ content: generateRandom (interaction.guildId) });
-        break;
-    }
+    const option = slashOptionNames [name];
+    const response = commands [name] ({
+        guildId: interaction.guildId,
+        settings,
+        value: option ? interaction.options.getInteger (option) : null,
+        usage: command => `\`/${command}\``
+    });
+    respond (response || { content: "That value isn't valid.", flags: MessageFlags.Ephemeral });
 });
 
 client.on (Events.MessageCreate, msg => {
