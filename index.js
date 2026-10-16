@@ -57,7 +57,15 @@ let consoleLog = (...arg) => console.log (`[${new Date ().toISOString ()}] `, ..
 // </utility overrides>
 let serverSettings = {};
 
-if (fs.existsSync (`serverSettings.json`)) serverSettings = JSON.parse (fs.readFileSync ('serverSettings.json', 'utf8'));
+if (fs.existsSync (`serverSettings.json`)) {
+    try {
+        serverSettings = JSON.parse (fs.readFileSync ('serverSettings.json', 'utf8'));
+    } catch (err) {
+        // Starting with empty settings would overwrite everyone's settings on the next save
+        console.error (`serverSettings.json is not valid JSON (${err.message}). Fix or remove it, then restart.`);
+        process.exit (EXIT_CONFIG_ERROR);
+    }
+}
 
 consoleLog (`server settings: `, serverSettings);
 
@@ -121,14 +129,27 @@ const textBasedOnState = (txt, state) => {
     return words.join (' ');
 }
 
+// Write to a temporary file and rename it over the original, so a crash mid-write can't leave a half-written file
+const writeFileAtomic = (file, data) => {
+    const tmp = `${file}.tmp`;
+    const fd = fs.openSync (tmp, 'w');
+    try {
+        fs.writeFileSync (fd, data);
+        fs.fsyncSync (fd);
+    } finally {
+        fs.closeSync (fd);
+    }
+    fs.renameSync (tmp, file);
+}
+
 const updateServerFiles = () => {
     console.time ('update server files');
     for (let i = 0; i < servers.length; i++) {
-        fs.appendFileSync (`./servers/${servers [i]}`, buffers [servers [i]].join (''));
-        fs.writeFileSync (`serverSettings.json`, JSON.stringify (serverSettings));
+        if (buffers [servers [i]].length) fs.appendFileSync (`./servers/${servers [i]}`, buffers [servers [i]].join (''));
         buffers [servers [i]] = [];
     }
-    
+    writeFileAtomic ('serverSettings.json', JSON.stringify (serverSettings, null, 4));
+
     console.timeEnd ('update server files');
 }
 
