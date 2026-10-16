@@ -355,14 +355,37 @@ for (let i = 0; i < servers.length; i++) {
 console.timeEnd ('initial init');
 
 
+let shuttingDown = false;
+const shutdown = reason => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    consoleLog (`shutting down (${reason}), saving server files`);
+    try {
+        updateServerFiles ();
+    } catch (err) {
+        consoleLog ('error saving server files', err);
+    }
+    client.destroy ();
+    process.exit (0);
+}
+
+process.on ('SIGINT', () => shutdown ('SIGINT'));
+process.on ('SIGTERM', () => shutdown ('SIGTERM'));
+// The launcher went away; exit rather than keep running alongside the next launcher's bot
+process.on ('disconnect', () => shutdown ('launcher disconnected'));
+
 process.on ('message', msg => {
     switch (msg.messageType) {
         case 'MESSAGE-ADMINS':
         for (let id of config.admins) {
-            if (client.users.cache.get (id)) {
-                client.users.cache.get (id).send (msg.message);
-            }
+            client.users.fetch (id)
+                .then (user => user.send (msg.message))
+                .catch (err => consoleLog (`could not message admin ${id}`, err));
         }
+        break;
+
+        case 'SHUTDOWN':
+        shutdown ('requested by launcher');
         break;
     }
 });
@@ -371,7 +394,7 @@ process.on ('message', msg => {
 client.on ('ready', () => {
     consoleLog (`Logged in as ${client.user.tag}!`);
     client.user.setActivity ("you type | mk-help", { type: "WATCHING" });
-    process.send ({ messageType: 'READY' });
+    if (process.send) process.send ({ messageType: 'READY' });
 
 
     // <slash commands>
