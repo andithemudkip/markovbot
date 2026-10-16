@@ -1,6 +1,7 @@
 const {
     Client, GatewayIntentBits, Partials, Events, EmbedBuilder, PermissionFlagsBits, ActivityType,
-    ApplicationCommandOptionType, InteractionContextType, MessageFlags, GatewayCloseCodes, DiscordjsErrorCodes
+    ApplicationCommandOptionType, InteractionContextType, MessageFlags, GatewayCloseCodes, DiscordjsErrorCodes,
+    RESTJSONErrorCodes, OAuth2Scopes
 } = require ('discord.js');
 const client = new Client ({
     intents: [
@@ -466,9 +467,40 @@ client.once (Events.ClientReady, () => {
     if (process.send) process.send ({ messageType: 'READY' });
 
     client.application.commands.set (slashCommands)
-        .then (commands => consoleLog (`registered slash commands: ${commands.map (c => '/' + c.name).join (', ')}`))
+        .then (commands => {
+            consoleLog (`registered slash commands: ${commands.map (c => '/' + c.name).join (', ')}`);
+            return checkCommandAccess ();
+        })
         .catch (error => consoleLog ('err registering slash commands', error));
 });
+
+// Slash commands only show up in servers where the bot was invited with the applications.commands scope.
+// Bots invited before slash commands existed (or with a bot-only link) don't have it there.
+const checkCommandAccess = async () => {
+    const missing = [];
+    for (const guild of client.guilds.cache.values ()) {
+        try {
+            await guild.commands.fetch ();
+        } catch (err) {
+            if (err.code === RESTJSONErrorCodes.MissingAccess) missing.push (guild.name);
+            else consoleLog (`could not check slash commands in ${guild.name}:`, err.message);
+        }
+    }
+
+    if (!missing.length) {
+        consoleLog (`slash commands are available in all ${client.guilds.cache.size} servers`);
+        return;
+    }
+    const invite = client.generateInvite ({
+        scopes: [OAuth2Scopes.Bot, OAuth2Scopes.ApplicationsCommands],
+        permissions: [
+            PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions, PermissionFlagsBits.UseExternalEmojis
+        ]
+    });
+    consoleLog (`slash commands won't show in ${missing.length} of ${client.guilds.cache.size} servers, because the bot wasn't invited with the applications.commands scope there: ${missing.join (', ')}`);
+    consoleLog (`to fix it, open this link and pick each of those servers (the bot stays in the server, nothing is reset): ${invite}`);
+}
 
 client.on (Events.InteractionCreate, interaction => {
     if (!interaction.isChatInputCommand () || !interaction.guildId) return;
