@@ -53,15 +53,7 @@ const initChain = ch => {
         if (!serverSettings [ch].hasOwnProperty ('owo')) serverSettings [ch].currentState = 1;
         if (!serverSettings [ch].hasOwnProperty ('mentions')) serverSettings [ch].mentions = true;
     }
-    if (!fs.existsSync (`./chains/${ch}`)) {
-        consoleLog ('from msg file');
-        chains [ch] = new MarkovChain ();
-        fs.readFileSync (`./servers/${ch}`, 'utf8').split ('\n').forEach (str => {
-            chains [ch].update (str);
-        });
-    } else {
-        chains [ch] = new MarkovChain (fs.readFileSync (`./chains/${ch}`, 'utf8'));
-    }
+    chains [ch] = new MarkovChain (fs.readFileSync (`./servers/${ch}`, 'utf8'));
     
     console.timeEnd (`initialize chain for server ${ch}`);
 }
@@ -105,7 +97,6 @@ const updateServerFiles = () => {
     console.time ('update server files');
     for (let i = 0; i < servers.length; i++) {
         fs.appendFileSync (`./servers/${servers [i]}`, buffers [servers [i]].join (''));
-        fs.writeFileSync (`./chains/${servers [i]}`, chains [servers [i]].toString ());
         fs.writeFileSync (`serverSettings.json`, JSON.stringify (serverSettings));
         buffers [servers [i]] = [];
     }
@@ -139,11 +130,10 @@ const onNewMessage = msg => {
 const replyToMessage = msg => {
     if (chains [`${msg.guild.id}.txt`]) {
         let msgText = textBasedOnState (msg.toString (), serverSettings [`${msg.guild.id}.txt`].currentState);
-        let reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText, grams: 3 });
-        if (reply [0] === ' ') reply = reply.substring (1);
+        let reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText });
 
         if (!reply || reply == msg.toString ()) {
-            reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText.toLowerCase (), grams: 3 });
+            reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText });
         }
 
         if (reply && reply != msg.toString ()) {
@@ -248,7 +238,7 @@ const processCommand = msg => {
         break;
 
         case 'chain':
-        let reply = chains [`${msg.guild.id}.txt`].generate ({ grams: 10 });
+        let reply = chains [`${msg.guild.id}.txt`].generate ();
         msg.channel.send (reply);
         break;
 
@@ -350,7 +340,7 @@ const processCommand = msg => {
 
 new Task ()
     .do (updateServerFiles)
-    .every (config.updateServerFilesInterval).minute ()
+    .every (config.updateServerFilesInterval).second ()
     .start ();
 
 if (!fs.existsSync ('./servers/')) fs.mkdirSync ('./servers/');
@@ -547,7 +537,7 @@ client.on ('ready', () => {
                 break;
     
                 case 'chain':
-                let reply = chains [`${interaction.guild_id}.txt`].generate ({ grams: 10 });
+                let reply = chains [`${interaction.guild_id}.txt`].generate ();
                 client.api.interactions (interaction.id, interaction.token).callback.post ({
                     data: {
                         type: 4,
