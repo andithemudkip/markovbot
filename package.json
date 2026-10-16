@@ -10,6 +10,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=20.12"
+  },
   "dependencies": {
     "@alpha-manager/core": "^1.0.6",
     "discord.js": "^12.5.1",

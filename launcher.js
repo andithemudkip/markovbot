@@ -12,6 +12,8 @@ const UPDATE_DIR = path.join (__dirname, 'update-temp');
 const SHUTDOWN_TIMEOUT = 15 * 1000;
 const MAX_RESTART_DELAY = 60 * 1000;
 const STABLE_UPTIME = 60 * 1000;
+// The bot exits with this when it's misconfigured (e.g. no DISCORD_TOKEN); restarting won't help
+const EXIT_CONFIG_ERROR = 78;
 
 let markov;
 let justUpdated = false;
@@ -125,6 +127,11 @@ const startMarkov = () => {
 
     child.on ('exit', (code, signal) => {
         if (child.stopping || shuttingDown) return;
+
+        if (code === EXIT_CONFIG_ERROR) {
+            consoleLog ('markov exited because of a configuration error (see above), not restarting');
+            process.exit (1);
+        }
 
         // Restart after a crash, backing off if it keeps crashing right away (e.g. bad token)
         if (Date.now () - startedAt > STABLE_UPTIME) crashCount = 0;

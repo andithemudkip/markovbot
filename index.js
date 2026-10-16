@@ -17,6 +17,21 @@ const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY",
 
 const config = require ('./config.json');
 const { stdout } = require ('process');
+const path = require ('path');
+
+// Exit code telling the launcher that restarting won't help until the setup is fixed
+const EXIT_CONFIG_ERROR = 78;
+
+// The Discord token comes from DISCORD_TOKEN, set in the environment or in a .env file next to this script
+try {
+    process.loadEnvFile (path.join (__dirname, '.env'));
+} catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+}
+if (!process.env.DISCORD_TOKEN) {
+    console.error ('DISCORD_TOKEN is not set. Add it to a .env file in the bot folder (DISCORD_TOKEN=...) or to the environment.');
+    process.exit (EXIT_CONFIG_ERROR);
+}
 
 let uwu = t => t.replace (/l|r/gi, 'w');
 
@@ -592,4 +607,10 @@ client.on ('message', msg => {
     }
 });
 
-client.login (config.token);
+client.login (process.env.DISCORD_TOKEN).catch (err => {
+    if (err.code === 'TOKEN_INVALID') {
+        console.error ('Discord rejected DISCORD_TOKEN as invalid. Check the token in .env or the environment.');
+        process.exit (EXIT_CONFIG_ERROR);
+    }
+    throw err;
+});

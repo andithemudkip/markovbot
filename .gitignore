@@ -5,3 +5,4 @@ config.json
 *.zip
 package-lock.json
 start.bat
+.env
