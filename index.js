@@ -24,7 +24,9 @@ const buffers = {};
 // const currentStates = {};
 
 
-const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM"];
+// Numbered from 1 in mk-state and /state, so new states go at the end
+const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM", "TOPIC"];
+const DEFAULT_STATE = "TOPIC";
 
 const config = require ('./config.json');
 const { stdout } = require ('process');
@@ -80,12 +82,12 @@ const initChain = ch => {
     
     if (!serverSettings [ch]) {
         serverSettings [ch] = {
-            currentState: states [0],
+            currentState: DEFAULT_STATE,
             owo: 1,
             mentions: true
         }
     } else {
-        if (!serverSettings [ch].hasOwnProperty ('currentState')) serverSettings [ch].currentState = states [0];
+        if (!serverSettings [ch].hasOwnProperty ('currentState')) serverSettings [ch].currentState = DEFAULT_STATE;
         if (!serverSettings [ch].hasOwnProperty ('owo')) serverSettings [ch].owo = 1;
         if (!serverSettings [ch].hasOwnProperty ('mentions')) serverSettings [ch].mentions = true;
     }
@@ -94,40 +96,40 @@ const initChain = ch => {
     console.timeEnd (`initialize chain for server ${ch}`);
 }
 
-const textBasedOnState = (txt, state) => {
-    let sent = txt.split (' ');
-    let words = [];
-    switch (state) {
-        case "FIRST_OR_LAST":
-        if (Math.floor (Math.random () * 3) + 1 === 3) {
-            words.push (sent [sent.length - 1]);
-            break;
-        }
+// Words of a message a reply can be built from: no links, mentions or @everyone/@here
+const seedWords = txt => txt.split (/\s+/).filter (word => word && !/^(https?:\/\/|<[@#]|@everyone$|@here$)/i.test (word));
 
-        case "FIRST_WORD/S_ONLY":
-        if (sent.length > 1) {
-            let r = Math.floor (Math.random () * 2) + 1;
-            for (let i = 0; i < r; i++) {
-                words.push (sent [i]);
-            }
-        } else words.push (sent [0]);
-        break;
+// Seeds to try for a reply, best first, depending on the server's chaining state. Each is { from }
+// (the reply starts with it) or { around } (TOPIC: the reply contains it somewhere).
+const seedsForState = (words, state, chain) => {
+    if (!words.length) return [];
 
-        case "FIRST_ONLY":
-        words.push (sent [0]);
-        break;
-
-        case "LAST_ONLY":
-        words.push (sent [sent.length - 1]);
-        break;
-
-        case "RANDOM":
-        words.push (sent [Math.floor (Math.random () * sent.length)]);
-        break;
+    if (state === "TOPIC") {
+        // Rarest words first: they say the most about what the message is about. Words seen only once
+        // go last, since a reply around one mostly repeats the single message it came from.
+        const rank = word => chain.count (word) >= 2 ? chain.count (word) : Infinity;
+        return [...new Set (words)]
+            .filter (word => chain.count (word) > 0)
+            .sort ((a, b) => rank (a) - rank (b))
+            .map (around => ({ around }));
     }
 
-    return words.join (' ');
+    const first = words [0], last = words [words.length - 1];
+    const firstWords = () => words.length > 1 && Math.random () < 0.5 ? [`${first} ${words [1]}`, first] : [first];
+    let preferred;
+    switch (state) {
+        case "FIRST_OR_LAST": preferred = Math.random () < 1 / 3 ? [last] : firstWords (); break;
+        case "FIRST_WORD/S_ONLY": preferred = firstWords (); break;
+        case "LAST_ONLY": preferred = [last]; break;
+        case "RANDOM": preferred = [words [Math.floor (Math.random () * words.length)]]; break;
+        default: preferred = [first]; // FIRST_ONLY
+    }
+    // If those don't work (e.g. words the bot has never seen), fall back to the message's other words
+    return [...new Set ([...preferred, ...words])].map (from => ({ from }));
 }
+
+// Each try is a few ms on big servers; this bounds the work for very long messages
+const MAX_SEED_TRIES = 8;
 
 // Write to a temporary file and rename it over the original, so a crash mid-write can't leave a half-written file
 const writeFileAtomic = (file, data) => {
@@ -181,15 +183,19 @@ const onNewMessage = msg => {
 }
 
 const replyToMessage = msg => {
-    if (chains [`${msg.guild.id}.txt`]) {
-        let msgText = textBasedOnState (msg.content, serverSettings [`${msg.guild.id}.txt`].currentState);
-        let reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText });
-
-        if (!reply || reply == msg.content) {
-            reply = chains [`${msg.guild.id}.txt`].generate ({ from: msgText });
+    const chain = chains [`${msg.guild.id}.txt`];
+    if (chain) {
+        let reply = '';
+        for (const seed of seedsForState (seedWords (msg.content), serverSettings [`${msg.guild.id}.txt`].currentState, chain).slice (0, MAX_SEED_TRIES)) {
+            const candidate = seed.around ? chain.generateAround (seed.around) : chain.generate ({ from: seed.from });
+            if (candidate && candidate != msg.content) {
+                reply = candidate;
+                break;
+            }
         }
 
-        if (reply && reply != msg.content) {
+        // Nothing in the message worked: react instead
+        if (reply) {
             switch (serverSettings [`${msg.guild.id}.txt`].owo) {
                 case 2:
                 reply = uwu (reply);

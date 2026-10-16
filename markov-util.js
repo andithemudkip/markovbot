@@ -104,6 +104,16 @@ class MarkovChain {
   }
 
   /**
+   * How many times a word (compared in normalized form) occurs in what was learnt.
+   *
+   * @param {string} word
+   */
+  count(word) {
+    const id = this.normIds.get(normalize(word))
+    return id === undefined ? 0 : this._postingCount(id)
+  }
+
+  /**
    * Generate a message. Returns '' if `from` ends in a word the chain doesn't know
    * or there is nothing to generate from.
    *
@@ -137,6 +147,25 @@ class MarkovChain {
     if (!best) return ''
     const words = cfg.backward ? best.words.reverse() : best.words
     return words.join(' ')
+  }
+
+  /**
+   * Generate a message containing `word` somewhere, not necessarily at the start:
+   * first backward from the word to a message start, then forward from there.
+   * Returns '' if the word isn't known.
+   *
+   * @param {string} word
+   * @param {Partial<typeof DEFAULTS>} [config]
+   * @return {string}
+   */
+  generateAround(word, config = {}) {
+    if (!this.contains(word)) return ''
+    const minWords = config.minWords ?? DEFAULTS.minWords
+
+    // Keep the part before the word short, so the word doesn't end up buried at the end
+    // and the forward pass still has room under maxWords
+    const before = this.generate({ ...config, from: word, backward: true, minWords: 1, targetWords: 8, maxWords: 15 }) || word
+    return this.generate({ ...config, from: before, minWords: tokenize(before).length + minWords - 1 })
   }
 
   /**
