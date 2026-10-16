@@ -1,7 +1,7 @@
 const {
     Client, GatewayIntentBits, Partials, Events, EmbedBuilder, PermissionFlagsBits, ActivityType,
     ApplicationCommandOptionType, InteractionContextType, MessageFlags, GatewayCloseCodes, DiscordjsErrorCodes,
-    RESTJSONErrorCodes, OAuth2Scopes
+    RESTJSONErrorCodes, OAuth2Scopes, ApplicationIntegrationType
 } = require ('discord.js');
 const client = new Client ({
     intents: [
@@ -459,7 +459,8 @@ const slashCommands = [{
 }, {
     name: "chain",
     description: "Generates a random sentence without a prompt"
-}].map (command => ({ ...command, contexts: [InteractionContextType.Guild] }));
+// Explicitly server-installed and server-only; left out, Discord falls back to the app's default install settings
+}].map (command => ({ ...command, integration_types: [ApplicationIntegrationType.GuildInstall], contexts: [InteractionContextType.Guild] }));
 
 client.once (Events.ClientReady, () => {
     consoleLog (`Logged in as ${client.user.tag}!`);
@@ -469,6 +470,8 @@ client.once (Events.ClientReady, () => {
     client.application.commands.set (slashCommands)
         .then (commands => {
             consoleLog (`registered slash commands: ${commands.map (c => '/' + c.name).join (', ')}`);
+            consoleLog (`application id: ${client.application.id}, bot user id: ${client.user.id}`);
+            consoleLog (`servers: ${client.guilds.cache.map (guild => `${guild.name} (${guild.id})`).join (', ')}`);
             return checkCommandAccess ();
         })
         .catch (error => consoleLog ('err registering slash commands', error));
