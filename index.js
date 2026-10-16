@@ -96,12 +96,13 @@ const initChain = ch => {
     console.timeEnd (`initialize chain for server ${ch}`);
 }
 
-// Splits a message into the words a reply can be built from, and links and mentions, which are only used
-// when there's nothing else (e.g. a message that's just a mention). @everyone/@here are never used.
-const seedWords = txt => {
+// Splits a message into the words a reply can be built from, and ones only used when there's nothing else
+// (e.g. a message that's just a link): links always, and mentions unless the server allows the bot to
+// mention people, in which case they're ordinary words. @everyone/@here are never used.
+const seedWords = (txt, mentionsAllowed) => {
     const all = txt.split (/\s+/).filter (word => word && !/^@(everyone|here)$/i.test (word));
-    const isLinkOrMention = word => /^(https?:\/\/|<[@#])/i.test (word);
-    return { words: all.filter (word => !isLinkOrMention (word)), lastResort: all.filter (isLinkOrMention) };
+    const isLastResort = word => /^https?:\/\//i.test (word) || (!mentionsAllowed && /^<[@#]/.test (word));
+    return { words: all.filter (word => !isLastResort (word)), lastResort: all.filter (isLastResort) };
 }
 
 // Seeds to try for a reply, best first, depending on the server's chaining state. Each is { from }
@@ -188,7 +189,8 @@ const replyToMessage = msg => {
     const chain = chains [`${msg.guild.id}.txt`];
     if (chain) {
         let reply = '';
-        for (const seed of seedsForState (seedWords (msg.content), serverSettings [`${msg.guild.id}.txt`].currentState, chain).slice (0, MAX_SEED_TRIES)) {
+        const settings = serverSettings [`${msg.guild.id}.txt`];
+        for (const seed of seedsForState (seedWords (msg.content, settings.mentions), settings.currentState, chain).slice (0, MAX_SEED_TRIES)) {
             const candidate = seed.around ? chain.generateAround (seed.around) : chain.generate ({ from: seed.from });
             if (candidate && candidate != msg.content) {
                 reply = candidate;
@@ -198,7 +200,7 @@ const replyToMessage = msg => {
 
         // Nothing in the message worked: react instead
         if (reply) {
-            switch (serverSettings [`${msg.guild.id}.txt`].owo) {
+            switch (settings.owo) {
                 case 2:
                 reply = uwu (reply);
                 break;
@@ -216,8 +218,7 @@ const replyToMessage = msg => {
                 break;
             }
 
-            const mentions = serverSettings [`${msg.guild.id}.txt`].mentions;
-            msg.channel.send ({ content: reply, allowedMentions: mentions ? undefined : { parse: [] } }).catch (logError ('reply'));
+            msg.channel.send ({ content: reply, allowedMentions: settings.mentions ? undefined : { parse: [] } }).catch (logError ('reply'));
         } else {
             msg.react ("markov_what:620612190902157343").catch (err => {
                 msg.react ("❓").catch (logError ('react'));
@@ -296,7 +297,7 @@ const commands = {
 
     mentions: ({ settings, value, usage }) => {
         if (value === null) return { embeds: [
-            settingEmbed ("mentions", "Enable or disable the bot's ability to mention roles or people.", [
+            settingEmbed ("mentions", "Enable or disable the bot's ability to mention roles or people. When on, mentions in your messages are used like any other word to build replies.", [
                 { name: "Current setting:", value: settings.mentions ? '1' : '0' },
                 { name: "Available options", value: "0 - OFF\n1 - ON" },
                 { name: "Changing the setting", value: `Type ${usage ('mentions')} to change the setting` }
