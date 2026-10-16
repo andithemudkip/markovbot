@@ -28,23 +28,16 @@ const buffers = {};
 const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM", "TOPIC", "CONTINUE", "RELEVANT"];
 const DEFAULT_STATE = "TOPIC";
 
-const config = require ('./config.json');
+const config = require ('./load-config.js');
+const { EXIT_CONFIG_ERROR } = config;
 const { stdout } = require ('process');
 const path = require ('path');
 
-// Exit code telling the launcher that restarting won't help until the setup is fixed
-const EXIT_CONFIG_ERROR = 78;
+if (!config.token) config.fail ('DISCORD_TOKEN is not set. Add it to a .env file in the bot folder (DISCORD_TOKEN=...) or to the environment.');
 
-// The Discord token comes from DISCORD_TOKEN, set in the environment or in a .env file next to this script
-try {
-    process.loadEnvFile (path.join (__dirname, '.env'));
-} catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-}
-if (!process.env.DISCORD_TOKEN) {
-    console.error ('DISCORD_TOKEN is not set. Add it to a .env file in the bot folder (DISCORD_TOKEN=...) or to the environment.');
-    process.exit (EXIT_CONFIG_ERROR);
-}
+const SERVERS_DIR = path.join (config.dataDir, 'servers');
+const SETTINGS_FILE = path.join (config.dataDir, 'serverSettings.json');
+const serverFile = filename => path.join (SERVERS_DIR, filename);
 
 let uwu = t => t.replace (/l|r/gi, 'w');
 
@@ -59,9 +52,9 @@ let consoleLog = (...arg) => console.log (`[${new Date ().toISOString ()}] `, ..
 // </utility overrides>
 let serverSettings = {};
 
-if (fs.existsSync (`serverSettings.json`)) {
+if (fs.existsSync (SETTINGS_FILE)) {
     try {
-        serverSettings = JSON.parse (fs.readFileSync ('serverSettings.json', 'utf8'));
+        serverSettings = JSON.parse (fs.readFileSync (SETTINGS_FILE, 'utf8'));
     } catch (err) {
         // Starting with empty settings would overwrite everyone's settings on the next save
         console.error (`serverSettings.json is not valid JSON (${err.message}). Fix or remove it, then restart.`);
@@ -71,9 +64,10 @@ if (fs.existsSync (`serverSettings.json`)) {
 
 consoleLog (`server settings: `, serverSettings);
 
-if (!fs.existsSync ('./servers/')) fs.mkdirSync ('./servers/');
+consoleLog (`data folder: ${config.dataDir}`);
+fs.mkdirSync (SERVERS_DIR, { recursive: true });
 // One <server id>.txt log per server; skip anything else, like the .DS_Store files macOS creates
-const servers = fs.readdirSync ('servers').filter (file => /^\d+\.txt$/.test (file));
+const servers = fs.readdirSync (SERVERS_DIR).filter (file => /^\d+\.txt$/.test (file));
 consoleLog ('servers: ', `${servers.join (', ')}`);
 
 const initChain = ch => {
@@ -91,7 +85,7 @@ const initChain = ch => {
         if (!serverSettings [ch].hasOwnProperty ('owo')) serverSettings [ch].owo = 1;
         if (!serverSettings [ch].hasOwnProperty ('mentions')) serverSettings [ch].mentions = true;
     }
-    chains [ch] = new MarkovChain (fs.readFileSync (`./servers/${ch}`, 'utf8'));
+    chains [ch] = new MarkovChain (fs.readFileSync (serverFile (ch), 'utf8'));
     
     console.timeEnd (`initialize chain for server ${ch}`);
 }
@@ -234,10 +228,10 @@ const writeFileAtomic = (file, data) => {
 const updateServerFiles = () => {
     console.time ('update server files');
     for (let i = 0; i < servers.length; i++) {
-        if (buffers [servers [i]].length) fs.appendFileSync (`./servers/${servers [i]}`, buffers [servers [i]].join (''));
+        if (buffers [servers [i]].length) fs.appendFileSync (serverFile (servers [i]), buffers [servers [i]].join (''));
         buffers [servers [i]] = [];
     }
-    writeFileAtomic ('serverSettings.json', JSON.stringify (serverSettings, null, 4));
+    writeFileAtomic (SETTINGS_FILE, JSON.stringify (serverSettings, null, 4));
 
     console.timeEnd ('update server files');
 }
@@ -249,7 +243,7 @@ const onNewMessage = msg => {
         let filename = `${msg.guild.id}.txt`;
 
         if (!servers.includes (filename)) {
-            fs.writeFileSync (`./servers/${filename}`, msg.content + '\n');
+            fs.writeFileSync (serverFile (filename), msg.content + '\n');
             servers.push (filename);
             initChain (filename);
         } else {
@@ -258,6 +252,11 @@ const onNewMessage = msg => {
         }
     } else {
         if (msg.content.startsWith ('mk-update') && config.admins.includes (msg.author.id)) {
+            // Updates go through the launcher (npm start); hosts like Railway run the bot directly and deploy from git
+            if (!process.send) {
+                msg.reply ('Updates via mk-update need the launcher (`npm start`). Here the bot runs without it, so deploy by pushing to git instead.').catch (logError ('DM reply'));
+                return;
+            }
             process.send ({
                 messageType: 'UPDATE',
                 author: { id: msg.author.id },
@@ -318,7 +317,7 @@ const NOTHING_TO_SAY = "I don't know enough words in this server yet.";
 const generateRandom = guildId => (chains [`${guildId}.txt`] && chains [`${guildId}.txt`].generate ()) || NOTHING_TO_SAY;
 
 const countLines = guildId => {
-    const file = `./servers/${guildId}.txt`;
+    const file = serverFile (`${guildId}.txt`);
     return fs.existsSync (file) ? fs.readFileSync (file, 'utf8').split ('\n').length : 0;
 }
 
@@ -623,7 +622,7 @@ client.on (Events.ShardDisconnect, ({ code }) => {
 
 client.on (Events.Error, err => consoleLog ('client error', err));
 
-client.login (process.env.DISCORD_TOKEN).catch (err => {
+client.login (config.token).catch (err => {
     if (err.code === DiscordjsErrorCodes.TokenInvalid) {
         console.error ('Discord rejected DISCORD_TOKEN as invalid. Check the token in .env or the environment.');
         process.exit (EXIT_CONFIG_ERROR);

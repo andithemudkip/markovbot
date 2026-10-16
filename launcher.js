@@ -3,7 +3,7 @@ const { fork, exec } = require ('child_process');
 const path = require ('path');
 const { promisify } = require ('util');
 
-const { admins } = require ('./config.json');
+const { admins, EXIT_CONFIG_ERROR } = require ('./load-config.js');
 const download = require ('download');
 
 const execAsync = promisify (exec);
@@ -12,8 +12,6 @@ const UPDATE_DIR = path.join (__dirname, 'update-temp');
 const SHUTDOWN_TIMEOUT = 15 * 1000;
 const MAX_RESTART_DELAY = 60 * 1000;
 const STABLE_UPTIME = 60 * 1000;
-// The bot exits with this when it's misconfigured (e.g. no DISCORD_TOKEN); restarting won't help
-const EXIT_CONFIG_ERROR = 78;
 
 let markov;
 let justUpdated = false;
