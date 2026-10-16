@@ -26,7 +26,9 @@ const DEFAULTS = {
   targetWords: 25,   // past this length, end the message as soon as a natural ending comes up
   maxWords: 50,      // hard cap on output length
   maxCopy: 6,        // after this many words copied in a row from one message, try to branch off
-  tries: 10          // attempts at producing something that isn't a verbatim existing message
+  tries: 10,         // attempts at producing something that isn't a verbatim existing message
+  continuation: false, // `from` is the end of an unfinished message, not the start of one
+  prefer: null        // words to use (once each) whenever one of them is a valid next word
 }
 
 // Wrapping characters that don't change what a word means in context. Sentence
@@ -48,6 +50,9 @@ const tokenize = text => text.split(/\s+/).filter(Boolean)
 
 // generateAround never puts a word further into a reply than this
 const MAX_AROUND_OFFSET = 15
+
+// The most context words generation ever uses ('auto' order picks 2 or 3)
+const MAX_ORDER = 3
 
 class MarkovChain {
 
@@ -129,6 +134,7 @@ class MarkovChain {
     // Longer contexts read better but need lots of data, otherwise they just recite messages.
     if (cfg.order === 'auto') cfg.order = this.length > 1500000 ? 3 : 2
     const dir = cfg.backward ? -1 : 1
+    cfg.preferIds = cfg.prefer && new Set([...cfg.prefer].map(w => this.normIds.get(normalize(w))).filter(id => id !== undefined))
 
     // Seed words in generation order
     let seed = tokenize(cfg.from || '')
@@ -180,6 +186,41 @@ class MarkovChain {
     const beforeLength = tokenize(before).length
     const reply = this.generate({ ...config, from: before, minWords: Math.max(minWords, beforeLength + (occurrence.atEnd ? 0 : 1)) })
     return reply || (occurrence.atEnd && beforeLength >= minWords ? before : '')
+  }
+
+  /**
+   * Continue an unfinished message: generate from its last few words (as the middle of a
+   * message, not its start) and return only the new words. Returns '' if its last word
+   * isn't known or nothing could be added.
+   *
+   * @param {string} text
+   * @param {Partial<typeof DEFAULTS>} [config]
+   * @return {string}
+   */
+  continueText(text, config = {}) {
+    const context = tokenize(text).slice(-MAX_ORDER)
+    if (!context.length) return ''
+    const full = this.generate({ ...config, from: context.join(' '), continuation: true, minWords: context.length + 2 })
+    return tokenize(full).slice(context.length).join(' ')
+  }
+
+  /**
+   * The length, in words, of the longest part of `text` that appears word for word
+   * (compared in normalized form) in what was learnt.
+   *
+   * @param {string} text
+   * @return {number}
+   */
+  longestCopy(text) {
+    const ids = tokenize(text).map(w => this.normIds.get(normalize(w)) ?? -1)
+    let longest = 0
+    let start = 0
+    for (let end = 0; end < ids.length; end++) {
+      // Drop words from the left until ids[start..end] occurs somewhere
+      while (start <= end && (ids[end] === -1 || !this._matches(ids.slice(start, end + 1), 1, 1).length)) start++
+      longest = Math.max(longest, end - start + 1)
+    }
+    return longest
   }
   /**
    * Re-pack all positions into the compact layout. Called automatically after
@@ -247,13 +288,14 @@ class MarkovChain {
     return compactCount + (recent ? recent.length : 0)
   }
 
+  /** Calls fn with each position of normId, stopping early if fn returns true. */
   _forEachPosting(normId, fn) {
     if (normId + 1 < this.postStart.length) {
       const end = this.postStart[normId + 1]
-      for (let i = this.postStart[normId]; i < end; i++) fn(this.postData[i])
+      for (let i = this.postStart[normId]; i < end; i++) if (fn(this.postData[i]) === true) return
     }
     const recent = this.recent.get(normId)
-    if (recent) for (const p of recent) fn(p)
+    if (recent) for (const p of recent) if (fn(p) === true) return
   }
 
   /** For a random occurrence of `normId`: how many words come before it in its message, and whether it ends it. */
@@ -284,9 +326,9 @@ class MarkovChain {
   /**
    * All stream positions p (of the context's last word) where `context` (norm ids,
    * in generation order) occurs, reading in direction `dir`, and that have a
-   * following token.
+   * following token. Stops after `limit` matches.
    */
-  _matches(context, dir) {
+  _matches(context, dir, limit = Infinity) {
     const k = context.length
 
     // Scan the positions of the rarest word in the context
@@ -311,6 +353,7 @@ class MarkovChain {
         if (at < 0 || at >= length || normOf[tokens[at]] !== context[i]) return
       }
       out.push(p)
+      return out.length >= limit
     })
     return out
   }
@@ -318,7 +361,7 @@ class MarkovChain {
   _generateOnce(seed, seedIds, dir, cfg) {
     const words = [...seed]
     // Generation history as norm ids, starting at a message boundary
-    const history = [BOUNDARY, ...seedIds]
+    const history = cfg.continuation ? [...seedIds] : [BOUNDARY, ...seedIds]
 
     let prevPos = -1      // where in the stream the last word was taken from
     let copyRun = 0       // how many words in a row were taken contiguously
@@ -378,7 +421,7 @@ class MarkovChain {
       // A context containing an unknown seed word can't match; back off.
       if (context.includes(-1)) continue
 
-      if (k === 1) {
+      if (k === 1 && !cfg.preferIds?.size) {
         // Every position of the word matches; try a few random ones before scanning them all
         const quick = this._samplePosting(context[0], dir, p =>
           !(avoidCopy && p === prevPos) &&
@@ -399,6 +442,13 @@ class MarkovChain {
       if (avoidCopy) candidates = candidates.filter(p => p !== prevPos)
       if (avoidEnd) candidates = candidates.filter(p => this.tokens[p + dir] !== BOUNDARY)
 
+      if (candidates.length && cfg.preferIds?.size) {
+        const preferred = candidates.filter(p => {
+          const id = this.normOf[this.tokens[p + dir]]
+          return cfg.preferIds.has(id) && !history.includes(id)
+        })
+        if (preferred.length) return { pos: preferred[Math.floor(Math.random() * preferred.length)] }
+      }
       if (candidates.length) return { pos: candidates[Math.floor(Math.random() * candidates.length)] }
 
       // Nothing satisfies our preferences at this order; remember a valid choice

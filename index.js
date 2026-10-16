@@ -25,7 +25,7 @@ const buffers = {};
 
 
 // Numbered from 1 in mk-state and /state, so new states go at the end
-const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM", "TOPIC"];
+const states = ["FIRST_OR_LAST", "FIRST_WORD/S_ONLY", "FIRST_ONLY", "LAST_ONLY", "RANDOM", "TOPIC", "CONTINUE", "RELEVANT"];
 const DEFAULT_STATE = "TOPIC";
 
 const config = require ('./config.json');
@@ -134,6 +134,90 @@ const seedsForState = ({ words, lastResort }, state, chain) => {
 // Each try is a few ms on big servers; this bounds the work for very long messages
 const MAX_SEED_TRIES = 8;
 
+// RELEVANT: how many TOPIC replies to generate and choose from, around how many of the rarest words
+const RELEVANT_CANDIDATES = 10;
+const RELEVANT_SEEDS = 3;
+// Words making up less than 1 in this many of all words learnt count as uncommon
+const RELEVANT_UNCOMMON = 2000;
+// Copying more words than this in a row from one message counts against a candidate
+const RELEVANT_COPY_ALLOWANCE = 6;
+
+// Repeating more words than this in a row from the message itself counts heavily against a candidate
+const RELEVANT_ECHO_ALLOWANCE = 2;
+
+// Positions in a that are part of a run of more than `allowance` words appearing back to back in b too
+const echoedPositions = (a, b, allowance) => {
+    const echoed = new Set ();
+    for (let i = 0; i < a.length; i++) {
+        for (let j = 0; j < b.length; j++) {
+            let k = 0;
+            while (i + k < a.length && j + k < b.length && a [i + k] === b [j + k]) k++;
+            if (k > allowance) for (let x = i; x < i + k; x++) echoed.add (x);
+        }
+    }
+    return echoed;
+}
+
+// How well a candidate reply relates to a message: the message's words it contains, rare words counting
+// for much more than common ones. Words it merely parrots from the message (runs of words in the same
+// order) don't count, and cost points; so does copying a long run of words from one old message.
+const relevanceScore = (candidate, message, chain) => {
+    const words = candidate.split (' ').map (MarkovChain.normalize);
+    const messageWords = new Set (message);
+    const echoed = echoedPositions (words, message, RELEVANT_ECHO_ALLOWANCE);
+    let score = 0;
+    for (const word of new Set (words.filter ((word, i) => !echoed.has (i)))) {
+        const count = messageWords.has (word) ? chain.count (word) : 0;
+        if (count) score += Math.log (chain.length / count);
+    }
+    score -= 10 * echoed.size;
+    score -= Math.max (0, chain.longestCopy (candidate) - RELEVANT_COPY_ALLOWANCE);
+    if (words.length < 4) score -= 3;
+    return score;
+}
+
+const mostRelevant = (parts, content, chain) => {
+    const seeds = seedsForState (parts, "TOPIC", chain).slice (0, RELEVANT_SEEDS);
+    if (!seeds.length) return '';
+    const message = content.split (/\s+/).filter (Boolean).map (MarkovChain.normalize);
+    // Steer generation towards the message's uncommon words, whenever one is a valid next word
+    const prefer = [...new Set ([...parts.words, ...parts.lastResort].map (MarkovChain.normalize))]
+        .filter (word => chain.count (word) && chain.count (word) < chain.length / RELEVANT_UNCOMMON);
+
+    let best = '', bestScore = -Infinity;
+    for (let i = 0; i < RELEVANT_CANDIDATES; i++) {
+        const candidate = chain.generateAround (seeds [i % seeds.length].around, { prefer });
+        if (!candidate || candidate == content) continue;
+        const score = relevanceScore (candidate, message, chain);
+        if (score > bestScore) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+    return best;
+}
+
+// CONTINUE: carry on from where the message stops, replying with only the new words
+const continueMessage = (content, chain) => chain.continueText (content.split (/\s+/).filter (word => !/^@(everyone|here)$/i.test (word)).join (' '));
+
+const generateReply = (content, settings, chain) => {
+    const parts = seedWords (content, settings.mentions);
+    const fromSeeds = state => {
+        for (const seed of seedsForState (parts, state, chain).slice (0, MAX_SEED_TRIES)) {
+            const candidate = seed.around ? chain.generateAround (seed.around) : chain.generate ({ from: seed.from });
+            if (candidate && candidate != content) return candidate;
+        }
+        return '';
+    }
+
+    // The new modes fall back to TOPIC when they can't produce anything
+    switch (settings.currentState) {
+        case "CONTINUE": return continueMessage (content, chain) || fromSeeds ("TOPIC");
+        case "RELEVANT": return mostRelevant (parts, content, chain) || fromSeeds ("TOPIC");
+        default: return fromSeeds (settings.currentState);
+    }
+}
+
 // Write to a temporary file and rename it over the original, so a crash mid-write can't leave a half-written file
 const writeFileAtomic = (file, data) => {
     const tmp = `${file}.tmp`;
@@ -188,15 +272,8 @@ const onNewMessage = msg => {
 const replyToMessage = msg => {
     const chain = chains [`${msg.guild.id}.txt`];
     if (chain) {
-        let reply = '';
         const settings = serverSettings [`${msg.guild.id}.txt`];
-        for (const seed of seedsForState (seedWords (msg.content, settings.mentions), settings.currentState, chain).slice (0, MAX_SEED_TRIES)) {
-            const candidate = seed.around ? chain.generateAround (seed.around) : chain.generate ({ from: seed.from });
-            if (candidate && candidate != msg.content) {
-                reply = candidate;
-                break;
-            }
-        }
+        let reply = generateReply (msg.content, settings, chain);
 
         // Nothing in the message worked: react instead
         if (reply) {
