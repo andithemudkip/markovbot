@@ -46,6 +46,9 @@ const normalize = word => {
 
 const tokenize = text => text.split(/\s+/).filter(Boolean)
 
+// generateAround never puts a word further into a reply than this
+const MAX_AROUND_OFFSET = 15
+
 class MarkovChain {
 
   /**
@@ -163,12 +166,21 @@ class MarkovChain {
     if (!this.contains(word)) return ''
     const minWords = config.minWords ?? DEFAULTS.minWords
 
-    // Keep the part before the word short, so the word doesn't end up buried at the end
-    // and the forward pass still has room under maxWords
-    const before = this.generate({ ...config, from: word, backward: true, minWords: 1, targetWords: 8, maxWords: 15 }) || word
-    return this.generate({ ...config, from: before, minWords: tokenize(before).length + minWords - 1 })
-  }
+    // Place the word like it was in a random real message containing it: about as far in, and at the
+    // end only if it was at the end there. So words that usually open (or close) messages tend to
+    // open (or close) replies too.
+    const occurrence = this._randomOccurrence(this.normIds.get(normalize(word)))
+    const offset = Math.min(occurrence.offset, MAX_AROUND_OFFSET)
+    // Exactly that many words before it, even if that means starting mid-sentence: allowing slack
+    // to look for a message start makes the lead-in systematically longer than in real messages
+    const before = offset === 0 ? word : this.generate({
+      ...config, from: word, backward: true, minWords: offset + 1, maxWords: offset + 1
+    }) || word
 
+    const beforeLength = tokenize(before).length
+    const reply = this.generate({ ...config, from: before, minWords: Math.max(minWords, beforeLength + (occurrence.atEnd ? 0 : 1)) })
+    return reply || (occurrence.atEnd && beforeLength >= minWords ? before : '')
+  }
   /**
    * Re-pack all positions into the compact layout. Called automatically after
    * bulk loading; can be called again occasionally if lots of messages were added.
@@ -242,6 +254,15 @@ class MarkovChain {
     }
     const recent = this.recent.get(normId)
     if (recent) for (const p of recent) fn(p)
+  }
+
+  /** For a random occurrence of `normId`: how many words come before it in its message, and whether it ends it. */
+  _randomOccurrence(normId) {
+    const p = this._samplePosting(normId, 1, () => true)
+    if (p === -1) return { offset: 0, atEnd: false }
+    let start = p
+    while (start > 0 && this.tokens[start - 1] !== BOUNDARY) start--
+    return { offset: p - start, atEnd: this.tokens[p + 1] === BOUNDARY }
   }
 
   /** A random position of `normId` that passes `accept`, or -1 if a few tries find none. */
