@@ -50,7 +50,7 @@ const initChain = ch => {
         }
     } else {
         if (!serverSettings [ch].hasOwnProperty ('currentState')) serverSettings [ch].currentState = states [0];
-        if (!serverSettings [ch].hasOwnProperty ('owo')) serverSettings [ch].currentState = 1;
+        if (!serverSettings [ch].hasOwnProperty ('owo')) serverSettings [ch].owo = 1;
         if (!serverSettings [ch].hasOwnProperty ('mentions')) serverSettings [ch].mentions = true;
     }
     chains [ch] = new MarkovChain (fs.readFileSync (`./servers/${ch}`, 'utf8'));
