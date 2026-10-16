@@ -483,7 +483,9 @@ const checkCommandAccess = async () => {
     const missing = [];
     for (const guild of client.guilds.cache.values ()) {
         try {
-            await guild.commands.fetch ();
+            // Reading commands works even without the scope, so test with a write instead: the bot only
+            // registers global commands, so clearing this server's own command list changes nothing
+            await guild.commands.set ([]);
         } catch (err) {
             if (err.code === RESTJSONErrorCodes.MissingAccess) missing.push (guild.name);
             else consoleLog (`could not check slash commands in ${guild.name}:`, err.message);
