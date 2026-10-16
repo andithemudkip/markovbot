@@ -96,23 +96,25 @@ const initChain = ch => {
     console.timeEnd (`initialize chain for server ${ch}`);
 }
 
-// Words of a message a reply can be built from: no links, mentions or @everyone/@here
-const seedWords = txt => txt.split (/\s+/).filter (word => word && !/^(https?:\/\/|<[@#]|@everyone$|@here$)/i.test (word));
+// Splits a message into the words a reply can be built from, and links and mentions, which are only used
+// when there's nothing else (e.g. a message that's just a mention). @everyone/@here are never used.
+const seedWords = txt => {
+    const all = txt.split (/\s+/).filter (word => word && !/^@(everyone|here)$/i.test (word));
+    const isLinkOrMention = word => /^(https?:\/\/|<[@#])/i.test (word);
+    return { words: all.filter (word => !isLinkOrMention (word)), lastResort: all.filter (isLinkOrMention) };
+}
 
 // Seeds to try for a reply, best first, depending on the server's chaining state. Each is { from }
 // (the reply starts with it) or { around } (TOPIC: the reply contains it somewhere).
-const seedsForState = (words, state, chain) => {
-    if (!words.length) return [];
-
+const seedsForState = ({ words, lastResort }, state, chain) => {
     if (state === "TOPIC") {
         // Rarest words first: they say the most about what the message is about. Words seen only once
         // go last, since a reply around one mostly repeats the single message it came from.
         const rank = word => chain.count (word) >= 2 ? chain.count (word) : Infinity;
-        return [...new Set (words)]
-            .filter (word => chain.count (word) > 0)
-            .sort ((a, b) => rank (a) - rank (b))
-            .map (around => ({ around }));
+        const byRarity = list => [...new Set (list)].filter (word => chain.count (word) > 0).sort ((a, b) => rank (a) - rank (b));
+        return [...byRarity (words), ...byRarity (lastResort)].map (around => ({ around }));
     }
+    if (!words.length) return [...new Set (lastResort)].map (from => ({ from }));
 
     const first = words [0], last = words [words.length - 1];
     const firstWords = () => words.length > 1 && Math.random () < 0.5 ? [`${first} ${words [1]}`, first] : [first];
@@ -125,7 +127,7 @@ const seedsForState = (words, state, chain) => {
         default: preferred = [first]; // FIRST_ONLY
     }
     // If those don't work (e.g. words the bot has never seen), fall back to the message's other words
-    return [...new Set ([...preferred, ...words])].map (from => ({ from }));
+    return [...new Set ([...preferred, ...words, ...lastResort])].map (from => ({ from }));
 }
 
 // Each try is a few ms on big servers; this bounds the work for very long messages

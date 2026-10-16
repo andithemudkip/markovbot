@@ -38,7 +38,8 @@ const WRAPPING = /^["'`(\[{*_~“”‘’]+|["'`)\]}*_~“”‘’,;]+$/g
  * as do "*this*" and "this"). The original spelling is still what ends up in the output.
  */
 const normalize = word => {
-  const lower = word.toLowerCase().replace(/’/g, '\'')
+  // <@!id> is the old nickname form of the user mention <@id>
+  const lower = word.toLowerCase().replace(/’/g, '\'').replace(/^<@!/, '<@')
   const stripped = lower.replace(WRAPPING, '')
   return stripped || lower
 }
